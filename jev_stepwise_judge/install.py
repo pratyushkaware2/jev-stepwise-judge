@@ -178,6 +178,9 @@ def skill(remove, dry, log):
 
 def run(agents, remove=False, dry=False, log=print):
     agents = agents or ["claude", "codex", "grok", "opencode"]
+    if dry:
+        _log = log
+        log = lambda m: _log("[dry-run] would: " + m)  # noqa: E731
     if not remove and not os.access(BIN, os.X_OK):
         os.chmod(BIN, 0o755)
     for a in agents:

@@ -257,6 +257,9 @@ def decide_step(answers, f, st, cfg):
         findings.append(("advice", "'%s' looks done: mark it completed and move to the next goal"
                          % (f["current_goal"] or "")[:80]))
     planning = kind == "goal_update" and not f.get("marks_current_goal_completed")
+    writes_tests = kind == "edit" and f.get("edits_tests_only")
+    if writes_tests and d["direction"] == "run_verification":
+        planning = True  # writing tests is verification work, not a detour from it
     if (not planning and kind in TYPED_KINDS and d["direction"] in COMPATIBLE and kind not in COMPATIBLE[d["direction"]]
             and d["confidence"] >= th["move_conf"]
             and (n.get("step_sound", 1.0) < 0.5 or n.get("goal_aligned", 1.0) <= th["off_goal_max"])):

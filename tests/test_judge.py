@@ -85,6 +85,9 @@ class TestClassify(unittest.TestCase):
         self.assertEqual(self.kind("Read", {"file_path": "a.py"}), "read")
         self.assertEqual(self.kind("mcp__github__create_issue", {}), "external")
         self.assertEqual(self.kind("mcp__github__get_issue", {}), "search")
+        self.assertEqual(self.kind("mcp__jev-stepwise-judge__set_plan", {"todos": []}), "meta")
+        self.assertEqual(self.kind("jev-stepwise-judge__get_direction", {}), "meta")
+        self.assertEqual(self.kind("search_tool", {"query": "x"}), "search")
         s = steps.classify("apply_patch", {"input": "*** Begin Patch\n*** Update File: src/x.py\n@@"})
         self.assertEqual((s["kind"], s["paths"]), ("edit", ["src/x.py"]))
 
@@ -228,6 +231,17 @@ class TestPolicy(TempState):
                                   direction=choice("run_verification", 0.9), step_sound=noul(0.3))
         self.assertEqual((sev, d["direction"]), ("advice", "run_verification"))
         self.assertIn("off-direction", msg)
+
+    def test_writing_tests_is_not_off_direction(self):
+        st = self.state_with_todo()
+        sev, _, d = self.decide(st, "Edit", {"file_path": "/p/tests/test_parse.py"},
+                                direction=choice("run_verification", 0.9), step_sound=noul(0.3))
+        self.assertEqual((sev, d["direction"]), ("none", "run_verification"))
+
+    def test_test_paths(self):
+        for p in ("tests/test_a.py", "test_a.py", "pkg/a_test.go", "src/a.test.ts", "__tests__/x.js"):
+            self.assertTrue(steps.is_test_path(p), p)
+        self.assertFalse(steps.is_test_path("src/testing_utils.py"))
 
     def test_repeat_failure(self):
         st = self.state_with_todo(failed=True)

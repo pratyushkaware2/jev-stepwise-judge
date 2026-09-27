@@ -319,6 +319,7 @@ def facts(st, proposed=None):
     if proposed:
         f["proposed_kind"] = proposed["kind"]
         if proposed["kind"] == "edit":
+            f["edits_tests_only"] = bool(proposed["paths"]) and all(steps.is_test_path(p) for p in proposed["paths"])
             f["edit_targets_never_read"] = [_rel(p, st["cwd"]) for p in proposed["paths"]
                                             if p not in k["files"] and os.path.exists(p)][:5]
         if proposed["kind"] == "goal_update":

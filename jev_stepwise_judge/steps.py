@@ -19,7 +19,8 @@ import shlex
 # tool names, lower-cased, across Claude Code, Codex, Grok CLI and OpenCode
 READ_TOOLS = {"read", "read_file", "notebookread", "view", "view_image", "readmcpresourcetool"}
 SEARCH_TOOLS = {"grep", "glob", "ls", "list", "list_dir", "list_directory", "grep_search", "file_search",
-                "codebase_search", "search", "find", "toolsearch", "listmcpresourcestool", "memory_search"}
+                "codebase_search", "search", "find", "toolsearch", "listmcpresourcestool", "memory_search",
+                "search_tool", "list_tools"}
 WEB_TOOLS = {"webfetch", "websearch", "web_fetch", "web_search", "fetch"}
 EDIT_TOOLS = {"edit", "multiedit", "write", "notebookedit", "apply_patch", "search_replace", "write_file",
               "create_file", "edit_file", "patch", "str_replace", "str_replace_editor", "replace"}
@@ -84,6 +85,13 @@ def _strings(obj):
             yield from _strings(v)
 
 
+TEST_PATH_RE = re.compile(r"(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]+$|_test\.\w+$|\.(test|spec)\.\w+$")
+
+
+def is_test_path(path):
+    return bool(TEST_PATH_RE.search(path or ""))
+
+
 def input_paths(tool_input):
     paths = []
     if isinstance(tool_input, dict):
@@ -117,7 +125,9 @@ def classify(tool, tool_input):
     base = name.split("__")[-1] if name.startswith("mcp__") else name
     step = {"kind": "shell", "paths": input_paths(tool_input), "command": None, "background": False}
 
-    if name in TODO_TOOLS:
+    if "jev-stepwise-judge" in name or "jev_stepwise_judge" in name:
+        step["kind"] = "meta"  # calls to the judge itself are never judged
+    elif name in TODO_TOOLS:
         step["kind"] = "goal_update"
     elif name in READ_TOOLS:
         step["kind"] = "read"
