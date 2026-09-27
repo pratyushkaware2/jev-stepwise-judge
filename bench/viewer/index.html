@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rollout viewer</title>
+<style>
+:root {
+  --paper: #f3f5f8; --surface: #ffffff; --sunk: #eef1f5; --ink: #17202b; --muted: #5d6877; --faint: #8a94a3;
+  --rule: #d8dee6; --agent: #35598a; --tool: #5f6773; --user: #0f6f68; --judge: #4a3a91; --judge-wash: #f1eefb;
+  --go: #1d7a4e; --go-wash: #e5f4ec; --warn: #a55309; --warn-wash: #fcf1e3; --bad: #b3261e; --bad-wash: #fcebea;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --serif: "Iowan Old Style", Charter, "Palatino Linotype", Palatino, Georgia, serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #11151b; --surface: #181e26; --sunk: #141920; --ink: #e5e9ef; --muted: #9aa4b2; --faint: #6e7886;
+    --rule: #28313d; --agent: #8fb0dd; --tool: #a3abb7; --user: #5fc4bb; --judge: #b3a6f2; --judge-wash: #211d33;
+    --go: #5cc28f; --go-wash: #16281f; --warn: #eea552; --warn-wash: #2b2114; --bad: #f07168; --bad-wash: #2d1716;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #11151b; --surface: #181e26; --sunk: #141920; --ink: #e5e9ef; --muted: #9aa4b2; --faint: #6e7886;
+  --rule: #28313d; --agent: #8fb0dd; --tool: #a3abb7; --user: #5fc4bb; --judge: #b3a6f2; --judge-wash: #211d33;
+  --go: #5cc28f; --go-wash: #16281f; --warn: #eea552; --warn-wash: #2b2114; --bad: #f07168; --bad-wash: #2d1716;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink); font: 14px/1.5 var(--sans); }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--judge); outline-offset: 2px; }
+.app { display: grid; grid-template-columns: 340px minmax(0, 1fr); height: 100vh; }
+@media (max-width: 860px) { .app { grid-template-columns: 1fr; height: auto; } aside { max-height: none; } .list { max-height: 50vh; } .timeline, .head { padding-left: 12px; padding-right: 12px; } .ev { grid-template-columns: 44px 14px minmax(0,1fr); gap: 0 6px; } }
+
+/* ---------------- sidebar */
+aside { border-right: 1px solid var(--rule); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+.load { padding: 14px 16px 10px; border-bottom: 1px solid var(--rule); }
+.load h1 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+.load form { display: flex; gap: 6px; }
+.load input { flex: 1; min-width: 0; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); font: 12px var(--mono); }
+.load button { padding: 6px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--sunk); }
+.load .msg { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 18px; }
+.load .msg.err { color: var(--bad); }
+.filters { padding: 10px 16px; border-bottom: 1px solid var(--rule); display: grid; gap: 8px; }
+.filters .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.filters select, .filters input[type=search] { padding: 5px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); }
+.filters input[type=search] { flex: 1; min-width: 0; }
+.chip { border: 1px solid var(--rule); background: var(--paper); border-radius: 999px; padding: 2px 10px; font-size: 12px; }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.summary { padding: 10px 16px; border-bottom: 1px solid var(--rule); max-height: 42vh; overflow: auto; flex: none; }
+.summary .note { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.sumrow { display: grid; grid-template-columns: 78px 1fr 44px; gap: 8px; align-items: center; font-size: 12px; padding: 2px 0; }
+.sumrow .bar { height: 8px; background: var(--sunk); border-radius: 4px; overflow: hidden; }
+.sumrow .bar i { display: block; height: 100%; background: var(--agent); border-radius: 4px; }
+.sumrow.off .bar i { background: var(--faint); }
+.sumrow .num { text-align: right; font-variant-numeric: tabular-nums; }
+.sumrow .ci { grid-column: 2 / 4; color: var(--muted); font-size: 11px; margin-top: -2px; }
+.list { overflow: auto; flex: 1; min-height: 0; }
+.list .count { padding: 8px 16px; font-size: 12px; color: var(--muted); position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--rule); }
+.item { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; padding: 7px 16px; border-bottom: 1px solid var(--sunk); cursor: pointer; align-items: baseline; }
+.item:hover { background: var(--sunk); }
+.item[aria-selected="true"] { background: var(--judge-wash); box-shadow: inset 3px 0 0 var(--judge); }
+.item .mark { font-weight: 700; }
+.item .task { font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .meta { font-size: 11px; color: var(--muted); grid-column: 2 / 4; display: flex; gap: 10px; }
+.item .arm { font-size: 11px; color: var(--muted); }
+.ok { color: var(--go); } .no { color: var(--bad); } .inf { color: var(--warn); }
+
+/* ---------------- main */
+main { overflow: auto; min-height: 0; }
+.empty { max-width: 560px; margin: 18vh auto; color: var(--muted); text-align: center; padding: 0 16px; }
+.head { background: var(--surface); border-bottom: 1px solid var(--rule); padding: 18px 28px 14px; }
+.head .top { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.head h2 { margin: 0; font: 600 18px var(--mono); letter-spacing: -0.01em; }
+.pill { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 600; border: 1px solid currentColor; }
+.pill.solved { color: var(--go); background: var(--go-wash); }
+.pill.failed { color: var(--bad); background: var(--bad-wash); }
+.pill.infra { color: var(--warn); background: var(--warn-wash); }
+.pill.arm { color: var(--judge); background: var(--judge-wash); }
+.pill.arm.off { color: var(--muted); background: var(--sunk); }
+.stats { display: flex; flex-wrap: wrap; gap: 4px 20px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.stats b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.headgrid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; margin-top: 12px; align-items: end; }
+@media (max-width: 1100px) { .headgrid { grid-template-columns: 1fr; } }
+.spark { display: block; width: 100%; height: 38px; }
+.sparklabel { font-size: 11px; color: var(--muted); }
+.siblings { display: grid; grid-template-columns: auto repeat(3, 22px); gap: 3px 4px; font-size: 11px; align-items: center; }
+.siblings .lab { color: var(--muted); padding-right: 6px; }
+.siblings a { display: block; width: 22px; height: 18px; border-radius: 4px; text-align: center; line-height: 18px; text-decoration: none; font-weight: 700; font-size: 11px; }
+.siblings a.s { background: var(--go-wash); color: var(--go); } .siblings a.f { background: var(--bad-wash); color: var(--bad); }
+.siblings a.x { background: var(--warn-wash); color: var(--warn); } .siblings a.cur { outline: 2px solid var(--ink); }
+.siblings span.none { color: var(--faint); text-align: center; }
+.label { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--judge-wash); border-left: 3px solid var(--judge); font-family: var(--serif); font-size: 15px; }
+.label small { font-family: var(--sans); color: var(--muted); font-size: 12px; margin-left: 6px; }
+.label .alts { font: 12px var(--sans); color: var(--muted); margin-top: 4px; }
+.tools { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.tools button { border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); padding: 3px 10px; font-size: 12px; }
+.tools button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+
+/* ---------------- timeline */
+.timeline { padding: 18px 28px 80px; max-width: 1180px; }
+.ev { display: grid; grid-template-columns: 58px 16px minmax(0, 1fr); gap: 0 10px; }
+.ev .when { font: 11px var(--mono); color: var(--faint); text-align: right; padding-top: 9px; font-variant-numeric: tabular-nums; }
+.ev .rail { position: relative; }
+.ev .rail::before { content: ""; position: absolute; left: 7px; top: 0; bottom: 0; width: 2px; background: var(--rule); }
+.ev .rail::after { content: ""; position: absolute; left: 3px; top: 12px; width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--tool)); box-shadow: 0 0 0 3px var(--paper); }
+.ev .body { padding: 4px 0 10px; min-width: 0; }
+.ev.turn .rail::after { display: none; }
+.turnline { font-size: 11px; color: var(--faint); padding: 8px 0 0; border-top: 1px dashed var(--rule); margin-top: 6px; display: flex; gap: 12px; }
+.who { font-size: 12px; font-weight: 600; color: var(--c); margin-bottom: 2px; }
+.prose { white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-text { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 14px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 16em; overflow: hidden; position: relative; }
+.task-text.open { max-height: none; }
+.more { border: 0; background: none; color: var(--agent); padding: 4px 0; font-size: 12px; }
+.thinking { color: var(--muted); font-style: italic; white-space: pre-wrap; }
+details.tool { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; }
+details.tool > summary { list-style: none; padding: 7px 12px; display: flex; gap: 10px; align-items: baseline; cursor: pointer; min-width: 0; }
+details.tool > summary::-webkit-details-marker { display: none; }
+details.tool > summary::before { content: "▸"; color: var(--faint); font-size: 11px; }
+details.tool[open] > summary::before { content: "▾"; }
+.tname { font: 600 12px var(--mono); color: var(--tool); white-space: nowrap; }
+.tsum { font: 12px var(--mono); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.tdur { font-size: 11px; color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tstat { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.tbody { border-top: 1px solid var(--rule); padding: 8px 12px 10px; display: grid; gap: 8px; }
+.tbody h4 { margin: 0; font-size: 11px; color: var(--muted); font-weight: 600; }
+pre { margin: 0; font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--sunk); border-radius: 6px; padding: 8px 10px; max-height: 420px; overflow: auto; }
+pre .add { color: var(--go); } pre .del { color: var(--bad); } pre .hunk { color: var(--judge); }
+details.tool.blocked { border-color: var(--bad); }
+details.tool.blocked > summary .tsum, details.tool.blocked > summary .tname { opacity: .6; text-decoration: line-through; text-decoration-color: var(--bad); }
+
+/* ---------------- the judge */
+.judge { --c: var(--judge); }
+.verdict-note { margin-top: 6px; border-left: 3px solid var(--judge); background: var(--judge-wash); border-radius: 0 8px 8px 0; padding: 8px 12px; font: 15px/1.45 var(--serif); }
+.verdict-note.block { border-left-color: var(--bad); background: var(--bad-wash); }
+.verdict-note .by { font: 600 11px var(--sans); color: var(--judge); display: block; margin-bottom: 2px; }
+.verdict-note.block .by { color: var(--bad); }
+.ruling { border: 1px solid var(--judge); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.ruling .rhead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 10px 16px; background: var(--judge-wash); border-bottom: 1px solid var(--rule); }
+.ruling .rhead .title { font: 600 12px var(--sans); color: var(--judge); }
+.ruling .rhead .lat { font-size: 11px; color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+.ruling .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); }
+@media (max-width: 1000px) { .ruling .cols { grid-template-columns: 1fr; } }
+.claim { padding: 12px 16px; border-right: 1px solid var(--rule); font-size: 13px; }
+.claim .goal { font-weight: 600; margin-bottom: 8px; }
+.beliefs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.belief { font-size: 11px; border-radius: 4px; padding: 1px 7px; background: var(--sunk); color: var(--muted); }
+.belief.yes { background: var(--agent); color: var(--surface); }
+.claim dl { margin: 0; display: grid; gap: 6px; }
+.claim dt { font-size: 11px; color: var(--muted); font-weight: 600; }
+.claim dd { margin: 0; }
+.claim ul { margin: 2px 0 0; padding-left: 18px; }
+.claim .next { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--rule); }
+.claim .odd { font-size: 11px; color: var(--warn); margin-top: 8px; }
+.decision { padding: 12px 18px 14px; font-family: var(--serif); }
+.direction { font-size: 22px; line-height: 1.2; }
+.conf { display: flex; align-items: center; gap: 8px; margin: 6px 0 4px; font: 11px var(--sans); color: var(--muted); }
+.meter { flex: 0 0 140px; height: 6px; background: var(--sunk); border-radius: 3px; overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--judge); }
+.meaning { font-size: 15px; color: var(--ink); margin: 4px 0 8px; }
+.stepverdict { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin: 10px 0 6px; font-size: 15px; }
+.stamp { font: 700 12px var(--sans); border: 2px solid currentColor; border-radius: 4px; padding: 1px 8px; transform: rotate(-1.5deg); display: inline-block; }
+.stamp.go { color: var(--go); } .stamp.re { color: var(--warn); } .stamp.no { color: var(--bad); }
+.do { margin: 6px 0; padding-left: 20px; font-size: 14px; }
+.mism { margin: 10px 0 0; padding: 8px 12px; background: var(--bad-wash); border-radius: 6px; font-size: 14px; }
+.mism b { font: 600 11px var(--sans); color: var(--bad); display: block; margin-bottom: 2px; }
+.mism ul { margin: 0; padding-left: 18px; }
+.why { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.probs { margin-top: 10px; display: grid; grid-template-columns: max-content 1fr 34px; gap: 3px 10px; font: 11px var(--sans); color: var(--muted); align-items: center; }
+.probs .pb { height: 5px; background: var(--sunk); border-radius: 3px; overflow: hidden; }
+.probs .pb i { display: block; height: 100%; background: var(--faint); }
+.probs .pn { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
+.jevent { font: 14px var(--serif); color: var(--judge); }
+.errcard { border: 1px solid var(--bad); background: var(--bad-wash); border-radius: 8px; padding: 8px 12px; }
+.errcard b { color: var(--bad); }
+.vcard { border: 2px solid var(--rule); border-radius: 10px; background: var(--surface); padding: 12px 16px; }
+.vcard.s { border-color: var(--go); } .vcard.f { border-color: var(--bad); }
+.vcard h3 { margin: 0 0 6px; font-size: 15px; }
+.tests { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin: 8px 0; }
+.tests ul { margin: 2px 0 0; padding-left: 18px; font: 12px var(--mono); }
+.causes { margin-top: 10px; font-size: 12px; }
+.causes summary { cursor: pointer; color: var(--muted); }
+.causes table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.causes th { font-weight: 600; color: var(--muted); font-size: 11px; text-align: right; padding: 2px 4px; }
+.causes td { padding: 2px 4px; border-top: 1px solid var(--sunk); }
+.causes td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.linkish { border: 0; background: none; padding: 0; color: var(--agent); text-align: left; }
+.hidden { display: none !important; }
+kbd { font: 11px var(--mono); border: 1px solid var(--rule); border-radius: 3px; padding: 0 4px; }
+.help { font-size: 11px; color: var(--faint); padding: 8px 16px; border-top: 1px solid var(--rule); }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="load">
+      <h1>Rollout viewer</h1>
+      <form id="loadform">
+        <input id="path" aria-label="Results folder" placeholder="/path/to/bench/results" spellcheck="false">
+        <button type="submit">Load</button>
+      </form>
+      <div class="msg" id="loadmsg"></div>
+    </div>
+    <div class="filters">
+      <div class="row">
+        <select id="run" aria-label="Run"></select>
+        <select id="outcome" aria-label="Outcome">
+          <option value="">All outcomes</option><option value="solved">Solved</option><option value="failed">Not solved</option>
+          <option value="infra">Infrastructure error</option><option value="overflow">Context overflow</option>
+          <option value="blocked">Had blocked steps</option><option value="reported">Reported to the judge</option>
+        </select>
+      </div>
+      <div class="row" id="arms" role="group" aria-label="Arms"></div>
+      <div class="row">
+        <input type="search" id="q" placeholder="Filter by task or failure label" aria-label="Filter by task">
+        <select id="sort" aria-label="Sort">
+          <option value="task">By task</option><option value="blocks">Most blocks</option>
+          <option value="reports">Most reports</option><option value="time">Longest</option>
+        </select>
+      </div>
+    </div>
+    <div class="summary" id="summary"></div>
+    <div class="list" id="list"></div>
+    <div class="help"><kbd>j</kbd> <kbd>k</kbd> next and previous trial, <kbd>/</kbd> filter, <kbd>t</kbd> judge only</div>
+  </aside>
+  <main id="main"><div class="empty" id="empty">Loading results…</div></main>
+</div>
+<script>
+const ARMS = ["off", "agent", "joints", "every_step"];
+const ARM_NAME = { off: "baseline", agent: "agent", joints: "joints", every_step: "every_step" };
+const S = { index: null, run: "", arms: new Set(ARMS), outcome: "", q: "", sort: "task", list: [], cur: null, judgeOnly: false, hideReads: false };
+const $ = (id) => document.getElementById(id);
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "style") el.setAttribute("style", v);
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : String(kid));
+  return el;
+}
+const pct = (x) => x == null || isNaN(x) ? "–" : (100 * x).toFixed(1) + "%";
+const kfmt = (n) => n == null ? "–" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(n);
+const clock = (ms) => { if (ms == null || isNaN(ms)) return ""; const s = Math.round(ms / 1000), neg = s < 0, a = Math.abs(s); return (neg ? "−" : "+") + Math.floor(a / 60) + ":" + String(a % 60).padStart(2, "0"); };
+const dur = (ms) => ms == null ? "" : ms < 1000 ? ms + " ms" : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " s";
+const outcomeOf = (t) => t.infra ? "infra" : t.reward >= 1 ? "solved" : "failed";
+
+async function api(path, body) {
+  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+/* ------------------------------------------------------------ index + filters */
+function setIndex(idx) {
+  S.index = idx;
+  $("path").value = idx.root;
+  const runs = Object.keys(idx.runs);
+  const preferred = runs.includes("swe") ? "swe" : runs[0];
+  if (!runs.includes(S.run)) S.run = preferred;
+  $("run").replaceChildren(...runs.map((r) => h("option", { value: r, selected: r === S.run }, r)));
+  $("loadmsg").className = "msg";
+  $("loadmsg").textContent = idx.trials.length + " trials in " + runs.length + " runs";
+  renderArms(); renderSummary(); renderList();
+  const want = decodeURIComponent(location.hash.slice(1));
+  const hit = want && idx.trials.find((t) => t.id === want);
+  if (hit) { S.run = hit.run; $("run").value = hit.run; renderSummary(); renderList(); open(hit.id); }
+  else if (S.list.length) open(S.list[0].id);
+  else $("main").replaceChildren(h("div", { class: "empty" }, "No trials match these filters."));
+}
+function renderArms() {
+  $("arms").replaceChildren(...ARMS.map((a) => h("button", { class: "chip", "aria-pressed": S.arms.has(a) ? "true" : "false",
+    onclick: () => { S.arms.has(a) && S.arms.size > 1 ? S.arms.delete(a) : S.arms.add(a); renderArms(); renderList(); } }, ARM_NAME[a])));
+}
+function renderSummary() {
+  const run = S.index.runs[S.run]; if (!run) return;
+  const sm = run.summary || {};
+  const rows = ARMS.filter((a) => sm[a]).map((a) => {
+    const s = sm[a], d = s.diff_vs_off;
+    return h("div", {},
+      h("div", { class: "sumrow" + (a === "off" ? " off" : "") },
+        h("span", {}, ARM_NAME[a]), h("span", { class: "bar" }, h("i", { style: "width:" + Math.min(100, 100 * s.solve_rate / 0.6) + "%" })),
+        h("span", { class: "num" }, pct(s.solve_rate))),
+      d ? h("div", { class: "sumrow" }, h("span"), h("span", { class: "ci" }, (d.mean >= 0 ? "+" : "") + (100 * d.mean).toFixed(1) +
+        " pts vs baseline, 95% CI " + (100 * d.ci95[0]).toFixed(1) + " to " + (100 * d.ci95[1]).toFixed(1))) : null);
+  });
+  $("summary").replaceChildren(h("div", { class: "note" }, run.note || S.run), ...rows, causeTable());
+}
+function causeTable() {
+  const L = S.index.trials.filter((t) => t.run === S.run && t.label && t.label.cause);
+  if (!L.length) return null;
+  const causes = [...new Set(L.map((t) => t.label.cause))].sort();
+  const n = (a, c) => L.filter((t) => t.arm === a && t.label.cause === c).length;
+  const arms = ARMS.filter((a) => L.some((t) => t.arm === a));
+  return h("details", { class: "causes" }, h("summary", {}, "Why trials failed, per Jev (" + L.length + " labelled)"),
+    h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, ""), arms.map((a) => h("th", {}, ARM_NAME[a])))),
+      h("tbody", {}, causes.map((c) => h("tr", {},
+        h("td", {}, h("button", { class: "linkish", onclick: () => { S.q = c; $("q").value = c; renderList(); } }, c.replaceAll("_", " "))),
+        arms.map((a) => h("td", { class: "num" }, n(a, c) || "")))))));
+}
+function filtered() {
+  const q = S.q.toLowerCase();
+  let L = S.index.trials.filter((t) => t.run === S.run && S.arms.has(t.arm));
+  if (S.outcome === "overflow") L = L.filter((t) => t.overflow);
+  else if (S.outcome === "blocked") L = L.filter((t) => t.blocks > 0);
+  else if (S.outcome === "reported") L = L.filter((t) => t.set_state > 0);
+  else if (S.outcome) L = L.filter((t) => outcomeOf(t) === S.outcome);
+  if (q) L = L.filter((t) => t.task.toLowerCase().includes(q) || (t.label && (t.label.cause || "").toLowerCase().includes(q)));
+  const key = { task: (t) => t.task + "|" + ARMS.indexOf(t.arm) + "|" + t.attempt, blocks: (t) => -t.blocks, reports: (t) => -t.set_state, time: (t) => -t.agent_s }[S.sort];
+  return L.sort((a, b) => { const x = key(a), y = key(b); return x < y ? -1 : x > y ? 1 : 0; });
+}
+function renderList() {
+  S.list = filtered();
+  const items = S.list.map((t) => {
+    const o = outcomeOf(t);
+    return h("div", { class: "item", role: "option", tabindex: "0", "data-id": t.id, "aria-selected": S.cur === t.id ? "true" : "false",
+      onclick: () => open(t.id), onkeydown: (e) => { if (e.key === "Enter") open(t.id); } },
+      h("span", { class: "mark " + (o === "solved" ? "ok" : o === "infra" ? "inf" : "no"), title: o }, o === "solved" ? "✓" : o === "infra" ? "!" : "✕"),
+      h("span", { class: "task", title: t.task }, t.task),
+      h("span", { class: "arm" }, ARM_NAME[t.arm] + (t.attempt ? " #" + t.attempt : "")),
+      h("span", { class: "meta" },
+        h("span", {}, Math.round(t.agent_s / 60 * 10) / 10 + " min"), h("span", {}, t.tools + " tools"),
+        t.set_state ? h("span", {}, t.set_state + " reports") : null, t.blocks ? h("span", { class: "no" }, t.blocks + " blocked") : null,
+        t.overflow ? h("span", { class: "inf" }, "overflow") : null, t.label ? h("span", {}, t.label.cause) : null));
+  });
+  $("list").replaceChildren(h("div", { class: "count" }, S.list.length + " trials"), ...items);
+}
+
+/* ------------------------------------------------------------ one trial */
+async function open(id) {
+  S.cur = id;
+  history.replaceState(null, "", "#" + encodeURIComponent(id));
+  document.querySelectorAll(".item").forEach((el) => el.setAttribute("aria-selected", el.dataset.id === id ? "true" : "false"));
+  document.querySelector('.item[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  $("main").replaceChildren(h("div", { class: "empty" }, "Loading trace…"));
+  try { renderTrace(await api("/api/trace?id=" + encodeURIComponent(id))); }
+  catch (e) { $("main").replaceChildren(h("div", { class: "empty" }, "Could not load this trial: " + e.message)); }
+}
+
+function sparkline(ev) {
+  const pts = ev.filter((e) => e.kind === "turn" && e.context).map((e) => e.context);
+  if (pts.length < 2) return null;
+  const W = 600, H = 38, max = Math.max(...pts, 1);
+  const d = pts.map((v, i) => (i ? "L" : "M") + (i / (pts.length - 1) * W).toFixed(1) + "," + (H - 3 - v / max * (H - 6)).toFixed(1)).join("");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("preserveAspectRatio", "none"); svg.setAttribute("class", "spark");
+  svg.setAttribute("role", "img"); svg.setAttribute("aria-label", "Context size per turn, peak " + kfmt(max) + " tokens");
+  const p = document.createElementNS(svg.namespaceURI, "path");
+  p.setAttribute("d", d); p.setAttribute("fill", "none"); p.setAttribute("stroke", "var(--agent)"); p.setAttribute("stroke-width", "1.6");
+  p.setAttribute("vector-effect", "non-scaling-stroke");
+  svg.append(p);
+  return h("div", {}, svg, h("div", { class: "sparklabel" }, "Context per turn, peak " + kfmt(max) + " tokens over " + pts.length + " turns"));
+}
+
+function siblings(tr) {
+  const same = S.index.trials.filter((t) => t.run === tr.run && t.task === tr.task);
+  if (!same.length) return null;
+  const cells = [];
+  for (const a of ARMS) {
+    cells.push(h("span", { class: "lab" }, ARM_NAME[a]));
+    for (let n = 1; n <= 3; n++) {
+      const t = same.find((x) => x.arm === a && (x.attempt || 1) === n);
+      if (!t) { cells.push(h("span", { class: "none" }, "·")); continue; }
+      const o = outcomeOf(t);
+      cells.push(h("a", { href: "#" + encodeURIComponent(t.id), class: (o === "solved" ? "s" : o === "infra" ? "x" : "f") + (t.id === tr.id ? " cur" : ""),
+        title: ARM_NAME[a] + " attempt " + n + ": " + o, onclick: (e) => { e.preventDefault(); open(t.id); } }, o === "solved" ? "✓" : o === "infra" ? "!" : "✕"));
+    }
+  }
+  return h("div", {}, h("div", { class: "sparklabel", style: "margin-bottom:4px" }, "Same task, every arm and attempt"), h("div", { class: "siblings" }, cells));
+}
+
+function altCauses(lab) {
+  const p = ((lab.answers || {}).failure_cause || {}).probabilities || {};
+  const alts = Object.entries(p).filter(([k]) => k !== lab.cause).sort((a, b) => b[1] - a[1]).filter(([, v]) => v >= 0.05).slice(0, 3);
+  return alts.length ? h("div", { class: "alts" }, "Also possible: " + alts.map(([k, v]) => k.replaceAll("_", " ") + " " + v.toFixed(2)).join(", ")) : null;
+}
+
+function renderTrace(tr) {
+  const ev = tr.events, row = S.index.trials.find((t) => t.id === tr.id) || {};
+  const o = outcomeOf(row);
+  const turns = ev.filter((e) => e.kind === "turn").length;
+  const reports = ev.filter((e) => e.kind === "judge_report").length;
+  const blocks = ev.filter((e) => e.blocked).length;
+  const lab = tr.label;
+  const head = h("div", { class: "head" },
+    h("div", { class: "top" },
+      h("h2", {}, tr.task),
+      h("span", { class: "pill arm" + (tr.arm === "off" ? " off" : "") }, ARM_NAME[tr.arm]),
+      h("span", { class: "pill " + o }, o === "solved" ? "Solved" : o === "infra" ? "Infrastructure error" : "Not solved"),
+      h("span", { class: "sparklabel" }, tr.run + (tr.attempt ? ", attempt " + tr.attempt : ""))),
+    h("div", { class: "stats" },
+      h("span", {}, "Agent ", h("b", {}, Math.round(row.agent_s || 0) + " s")), h("span", {}, "Turns ", h("b", {}, turns)),
+      h("span", {}, "Tool calls ", h("b", {}, row.tools)), h("span", {}, "Reports ", h("b", {}, reports)),
+      h("span", {}, "Blocked steps ", h("b", {}, blocks)), h("span", {}, "Input tokens ", h("b", {}, kfmt(tr.tokens.in))),
+      row.exception ? h("span", {}, "Exception ", h("b", { class: "no" }, row.exception)) : null),
+    h("div", { class: "headgrid" }, sparkline(ev), siblings(tr)),
+    lab ? h("div", { class: "label" }, "Why it failed, per Jev: ", h("b", {}, lab.cause.replaceAll("_", " ")),
+      h("small", {}, "confidence " + (lab.confidence != null ? lab.confidence.toFixed(2) : "–")),
+      lab.judge_friction != null ? h("div", { class: "alts" }, "Judge friction kept it from finishing: p = " + lab.judge_friction.toFixed(2)) : null,
+      altCauses(lab)) : null,
+    h("div", { class: "tools" },
+      h("button", { "aria-pressed": String(S.judgeOnly), onclick: (e) => { S.judgeOnly = !S.judgeOnly; e.target.setAttribute("aria-pressed", S.judgeOnly); applyView(); } }, "Judge only"),
+      h("button", { "aria-pressed": String(S.hideReads), onclick: (e) => { S.hideReads = !S.hideReads; e.target.setAttribute("aria-pressed", S.hideReads); applyView(); } }, "Hide reads and searches"),
+      h("button", { onclick: () => document.querySelectorAll("details.tool").forEach((d) => d.open = true) }, "Expand all"),
+      h("button", { onclick: () => document.querySelectorAll("details.tool").forEach((d) => d.open = false) }, "Collapse all")));
+  const tl = h("div", { class: "timeline" }, ev.map((e) => renderEvent(e, tr.origin)));
+  $("main").replaceChildren(head, tl);
+  $("main").scrollTop = 0;
+  applyView();
+}
+
+function applyView() {
+  document.querySelectorAll(".ev").forEach((el) => {
+    const judgey = el.dataset.judge === "1", read = el.dataset.read === "1";
+    el.classList.toggle("hidden", (S.judgeOnly && !judgey) || (S.hideReads && read));
+  });
+}
+
+const READS = new Set(["read", "glob", "grep", "list", "ls", "webfetch"]);
+function toolSummary(e) {
+  const i = e.input || {};
+  if (typeof i !== "object") return String(i);
+  return i.command || i.filePath || i.pattern || i.path || i.url || (i.todos ? i.todos.map((t) => (t.status === "completed" ? "✓ " : t.status === "in_progress" ? "▸ " : "· ") + t.content).join("  ") : "") || e.title || JSON.stringify(i).slice(0, 160);
+}
+function pretty(v) { if (v == null) return ""; if (typeof v === "string") return v; return JSON.stringify(v, null, 2); }
+function diffPre(text) {
+  const pre = h("pre");
+  for (const line of text.split("\n")) {
+    const cls = line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : null;
+    pre.append(cls ? h("span", { class: cls }, line + "\n") : line + "\n");
+  }
+  return pre;
+}
+
+function row(e, origin, color, content, flags) {
+  return h("div", { class: "ev" + (flags?.cls ? " " + flags.cls : ""), style: "--c:" + color, "data-judge": flags?.judge ? "1" : "0", "data-read": flags?.read ? "1" : "0" },
+    h("div", { class: "when", title: new Date(e.t).toISOString() }, clock(e.t - origin)), h("div", { class: "rail" }), h("div", { class: "body" }, content));
+}
+
+function renderEvent(e, origin) {
+  switch (e.kind) {
+    case "user": {
+      const box = h("div", { class: "task-text" }, e.text);
+      return row(e, origin, "var(--user)", [h("div", { class: "who", style: "--c:var(--user)" }, "Task given to the agent"), box,
+        h("button", { class: "more", onclick: (ev) => { box.classList.toggle("open"); ev.target.textContent = box.classList.contains("open") ? "Show less" : "Show the whole task"; } }, "Show the whole task")]);
+    }
+    case "turn":
+      return row(e, origin, "transparent", h("div", { class: "turnline" }, h("span", {}, "Turn " + e.n),
+        e.context ? h("span", {}, kfmt(e.context) + " tokens in context") : null, e.output ? h("span", {}, kfmt(e.output) + " generated") : null), { cls: "turn" });
+    case "text":
+      return row(e, origin, "var(--agent)", [h("div", { class: "who" }, "Agent"), h("div", { class: "prose" }, e.text)]);
+    case "thinking":
+      return row(e, origin, "var(--agent)", [h("div", { class: "who" }, "Agent thinking"), h("div", { class: "thinking" }, e.text)]);
+    case "tool": return renderTool(e, origin);
+    case "judge_report": return renderRuling(e, origin);
+    case "judge_tool":
+      return row(e, origin, "var(--judge)", [h("div", { class: "who" }, "Judge tool " + e.tool.replace("jev-stepwise-judge_", "")),
+        h("details", { class: "tool" }, h("summary", {}, h("span", { class: "tsum" }, pretty(e.input))), h("div", { class: "tbody" }, h("pre", {}, e.output)))], { judge: true });
+    case "judge_event": {
+      const j = e.log || {};
+      return row(e, origin, "var(--judge)", h("div", { class: "jevent" }, "Judge " + (j.event || "event") + (j.direction ? ": " + j.direction.replaceAll("_", " ") : "") + (j.verdict ? ", " + j.verdict : "")), { judge: true });
+    }
+    case "error": case "exception":
+      return row(e, origin, "var(--bad)", h("div", { class: "errcard" }, h("b", {}, e.name), h("pre", { style: "margin-top:6px;background:transparent;padding:0" }, e.text)));
+    case "verifier": return renderVerifier(e, origin);
+  }
+  return row(e, origin, "var(--tool)", h("pre", {}, pretty(e)));
+}
+
+function renderTool(e, origin) {
+  const status = e.blocked ? h("span", { class: "tstat no" }, "blocked") : e.status === "error" ? h("span", { class: "tstat no" }, "error") : null;
+  const body = h("div", { class: "tbody" },
+    h("h4", {}, "Input"), h("pre", {}, pretty(e.input)),
+    e.diff ? [h("h4", {}, "Change"), diffPre(e.diff)] : null,
+    e.error ? [h("h4", {}, "Error"), h("pre", {}, e.error)] : null,
+    e.output ? [h("h4", {}, "Output"), h("pre", {}, e.output)] : null);
+  const det = h("details", { class: "tool" + (e.blocked ? " blocked" : "") },
+    h("summary", {}, h("span", { class: "tname" }, e.tool), h("span", { class: "tsum", title: toolSummary(e) }, toolSummary(e)), status,
+      h("span", { class: "tdur" }, e.end ? dur(e.end - e.t) : "")), body);
+  const notes = [];
+  if (e.blocked) notes.push(h("div", { class: "verdict-note block" }, h("span", { class: "by" }, "Blocked by the judge"), e.blocked));
+  if (e.judge_note) notes.push(h("div", { class: "verdict-note" }, h("span", { class: "by" }, "Judge note on the result"), e.judge_note));
+  return row(e, origin, e.blocked ? "var(--bad)" : "var(--tool)", [det, ...notes], { judge: !!(e.blocked || e.judge_note), read: READS.has(e.tool) && !e.blocked && !e.judge_note });
+}
+
+/* The agent's report, as sent: accept whatever shape the model produced. */
+function claimSide(inp) {
+  if (!inp || typeof inp !== "object") return h("div", { class: "claim" }, h("pre", {}, pretty(inp)));
+  const list = (v) => Array.isArray(v) ? (v.length ? h("ul", {}, v.map((x) => h("li", {}, typeof x === "string" ? x : JSON.stringify(x)))) : h("span", { class: "sparklabel" }, "none")) :
+    (v && typeof v === "object") ? h("pre", {}, pretty(v)) : (v === "" || v == null ? h("span", { class: "sparklabel" }, "empty") : h("div", { class: "prose" }, String(v)));
+  const k = inp.knowledge, w = inp.workspace;
+  const known = new Set(["current_goal", "believes_goal_done", "believes_verified", "next_step", "knowledge", "workspace", "session"]);
+  const odd = [];
+  if (k !== undefined && (typeof k !== "object" || Array.isArray(k))) odd.push("knowledge");
+  if (w !== undefined && (typeof w !== "object" || Array.isArray(w))) odd.push("workspace");
+  const fields = [];
+  const add = (label, v) => { if (v !== undefined) fields.push(h("dt", {}, label), h("dd", {}, list(v))); };
+  if (k && typeof k === "object" && !Array.isArray(k)) { add("Learned", k.learned); add("Still unknown", k.open_questions); } else add("Knowledge", k);
+  if (w && typeof w === "object" && !Array.isArray(w)) { add("Changed", w.changed); add("Still to change", w.still_required); add("Still to run", w.to_run); } else add("Workspace", w);
+  for (const [key, v] of Object.entries(inp)) if (!known.has(key)) add(key.replaceAll("_", " "), v);
+  const belief = (label, v) => h("span", { class: "belief" + (v === true ? " yes" : "") }, (v === true ? "believes " : v === false ? "does not believe " : "no claim: ") + label);
+  return h("div", { class: "claim" },
+    h("div", { class: "who", style: "--c:var(--agent)" }, "The agent's report"),
+    h("div", { class: "goal" }, inp.current_goal || "(no goal given)"),
+    h("div", { class: "beliefs" }, belief("goal done", inp.believes_goal_done), belief("verified", inp.believes_verified)),
+    h("dl", {}, fields),
+    inp.next_step ? h("div", { class: "next" }, h("dt", {}, "Intends to do next"), h("dd", {}, inp.next_step)) : null,
+    odd.length ? h("div", { class: "odd" }, "Sent " + odd.join(" and ") + " in the wrong shape (expected an object)") : null);
+}
+
+function decisionSide(e) {
+  const r = e.reply;
+  if (!r) return h("div", { class: "decision" }, h("pre", {}, e.reply_text || "No reply"));
+  const d = r.direction || {};
+  const v = r.next_step_verdict || "";
+  const stampCls = /go ahead|proceed/i.test(v) ? "go" : /block|deny|not allowed/i.test(v) ? "no" : "re";
+  const ans = r.answers || {};
+  const probs = [];
+  for (const [k, val] of Object.entries(ans)) {
+    let p = null, txt = null;
+    if (typeof val === "number") p = val;
+    else if (val && typeof val === "object" && val.confidence != null) { p = val.confidence; txt = val.choice; }
+    if (p == null) continue;
+    probs.push(h("span", {}, k.replaceAll("_", " ") + (txt ? " (" + String(txt).replaceAll("_", " ") + ")" : "")), h("span", { class: "pb" }, h("i", { style: "width:" + Math.round(p * 100) + "%" })), h("span", { class: "pn" }, p.toFixed(2)));
+  }
+  return h("div", { class: "decision" },
+    h("div", { class: "who", style: "--c:var(--judge);font-family:var(--sans)" }, "The judge"),
+    h("div", { class: "direction" }, (d.direction || "no direction").replaceAll("_", " ")),
+    d.confidence != null ? h("div", { class: "conf" }, h("span", { class: "meter" }, h("i", { style: "width:" + Math.round(d.confidence * 100) + "%" })), "confidence " + d.confidence.toFixed(2)) : null,
+    d.meaning ? h("div", { class: "meaning" }, d.meaning) : null,
+    d.do && d.do.length ? h("ul", { class: "do" }, d.do.map((x) => h("li", {}, x))) : null,
+    d.rule ? h("div", { class: "why" }, "Rule: " + d.rule) : null,
+    v ? h("div", { class: "stepverdict" }, h("span", { class: "stamp " + stampCls }, v), r.next_step ? h("span", {}, "on “" + r.next_step + "”") : null) : null,
+    r.mismatches && r.mismatches.length ? h("div", { class: "mism" }, h("b", {}, "Report contradicts the evidence"), h("ul", {}, r.mismatches.map((m) => h("li", {}, m)))) : null,
+    r.why && r.why.length ? h("div", { class: "why" }, "Because " + r.why.join("; ")) : null,
+    probs.length ? h("div", { class: "probs" }, probs) : null);
+}
+
+function renderRuling(e, origin) {
+  const d = (e.reply || {}).direction || {};
+  const card = h("div", { class: "ruling" },
+    h("div", { class: "rhead" }, h("span", { class: "title" }, "Report and ruling"),
+      d.goals_done ? h("span", { class: "sparklabel" }, "Goals done " + d.goals_done) : null,
+      h("span", { class: "lat" }, [e.ms != null ? "Jev answered in " + e.ms + " ms" : null, (e.reply || {}).model].filter(Boolean).join(", "))),
+    h("div", { class: "cols" }, claimSide(e.input), decisionSide(e)));
+  return row(e, origin, "var(--judge)", card, { judge: true, cls: "judge" });
+}
+
+function renderVerifier(e, origin) {
+  const solved = e.reward >= 1;
+  const block = (name, x) => x ? h("div", {}, h("h4", { style: "margin:0;font-size:12px" }, name + ": " + x.passed.length + " passed, " + x.failed.length + " failed"),
+    x.failed.length ? h("ul", {}, x.failed.slice(0, 30).map((t) => h("li", { class: "no" }, t))) : null) : null;
+  return row(e, origin, solved ? "var(--go)" : "var(--bad)", h("div", { class: "vcard " + (solved ? "s" : "f") },
+    h("h3", {}, solved ? "Tests pass: solved" : e.reward == null ? "No test result" : "Tests fail: not solved"),
+    e.patch_applied === false ? h("div", { class: "no" }, "The agent's patch did not apply.") : null,
+    h("div", { class: "tests" }, block("Tests the fix must make pass", e.FAIL_TO_PASS), block("Tests that must keep passing", e.PASS_TO_PASS)),
+    h("details", { class: "tool" }, h("summary", {}, h("span", { class: "tsum" }, "Test output, last lines")), h("div", { class: "tbody" }, h("pre", {}, e.stdout_tail)))));
+}
+
+/* ------------------------------------------------------------ wiring */
+$("loadform").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("loadmsg").className = "msg"; $("loadmsg").textContent = "Loading " + $("path").value + "…";
+  try { setIndex(await api("/api/load", { path: $("path").value.trim() })); }
+  catch (e) { $("loadmsg").className = "msg err"; $("loadmsg").textContent = e.message; }
+});
+$("run").addEventListener("change", (e) => { S.run = e.target.value; renderSummary(); renderList(); if (S.list.length) open(S.list[0].id); });
+$("outcome").addEventListener("change", (e) => { S.outcome = e.target.value; renderList(); });
+$("sort").addEventListener("change", (e) => { S.sort = e.target.value; renderList(); });
+$("q").addEventListener("input", (e) => { S.q = e.target.value; renderList(); });
+document.addEventListener("keydown", (e) => {
+  if (e.target.matches("input, select, textarea")) { if (e.key === "Escape") e.target.blur(); return; }
+  const i = S.list.findIndex((t) => t.id === S.cur);
+  if (e.key === "j" && i < S.list.length - 1) open(S.list[i + 1].id);
+  else if (e.key === "k" && i > 0) open(S.list[i - 1].id);
+  else if (e.key === "/") { e.preventDefault(); $("q").focus(); }
+  else if (e.key === "t") { S.judgeOnly = !S.judgeOnly; document.querySelectorAll(".tools button")[0]?.setAttribute("aria-pressed", S.judgeOnly); applyView(); }
+});
+window.addEventListener("hashchange", () => {
+  const id = decodeURIComponent(location.hash.slice(1)), t = S.index && S.index.trials.find((x) => x.id === id);
+  if (!t || id === S.cur) return;
+  if (t.run !== S.run) { S.run = t.run; $("run").value = t.run; renderSummary(); renderList(); }
+  open(id);
+});
+api("/api/index").then(setIndex).catch((e) => { $("main").replaceChildren(h("div", { class: "empty" }, "Could not read the results: " + e.message)); });
+</script>
+</body>
+</html>

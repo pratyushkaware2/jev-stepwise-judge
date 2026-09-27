@@ -59,6 +59,13 @@ class JevOpenCode(OpenCode):
         self._jev: Jev = jev
         # Trial applies extra_env to every exec in the agent phase, so set it before the trial starts.
         self._extra_env.setdefault("JEV_STEPWISE_STATE", STATE_DIR)
+        # SWE-bench images activate the repo's environment in ~/.bashrc (`conda activate testbed`), and
+        # the official harness runs `bash -c 'source ~/.bashrc && ...'`. OpenCode's bash tool runs
+        # non-interactive `bash -c`, which never reads ~/.bashrc, so without this every agent command ran
+        # in conda's base env: no repo dependencies, not even pytest. BASH_ENV makes non-interactive bash
+        # source it (bash expands $HOME itself). Stock Ubuntu .bashrc files return early when
+        # non-interactive, so images without such a setup are unaffected. Same for every arm.
+        self._extra_env.setdefault("BASH_ENV", "$HOME/.bashrc")
         if jev != "off":
             self._extra_env["JEV_STEPWISE_REQUIRE"] = jev
 

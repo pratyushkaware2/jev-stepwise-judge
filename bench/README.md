@@ -42,6 +42,9 @@ so the GPU only serves the model and a plain VM runs Docker.
 | `cost.py` | running cost from a ledger + budget guard |
 | `analyze.py` | per-arm solve rate, paired CIs vs baseline, judge usage, infra failures |
 | `sync_results.sh`, `supervise.sh` | copy results home; watch a run and exit on done / trouble |
+| `viewer/serve.py`, `viewer/index.html` | local web viewer for rollouts and the judge's rulings |
+| `export_artifacts.py` | `trials.csv`, `judge_events.jsonl` and per-run summaries from synced results |
+| `classify_failures.py` | Jev label for why each failed rollout failed |
 
 ## The setup that works (and why)
 
@@ -78,10 +81,29 @@ exception. `analyze.py` counts such trials as `infra` and leaves them out; rerun
 6. **Run.** `tmux new -d -s bench ~/jev-stepwise-judge/bench/main.sh`. Watch from home with
    `bench/supervise.sh main.done`.
 7. **Analyse.** `bench/sync_results.sh && bench/analyze.py bench/results/jobs swe` (or `tb2`).
-8. **Tear down.** Stop the pod (it bills until stopped or terminated) and `gcp_vm.sh stop` (disk only)
+8. **Browse.** `python3 bench/viewer/serve.py bench/results`, then open http://127.0.0.1:8765 (local
+   only; load another results folder from the page). Each rollout is one timeline in time order:
+   the task, agent messages, tool calls with their output and diffs, blocked steps, and every
+   `set_state` shown as the agent's report next to the judge's ruling (direction, confidence, verdict,
+   mismatches, Jev's probabilities). The header shows the context per turn and the same task in every
+   arm and attempt. `bench/export_artifacts.py` writes `trials.csv` and `judge_events.jsonl` for
+   your own analysis.
+9. **Label failures.** `bench/classify_failures.py bench/results --run swe` asks Jev, per failed trial,
+   which cause fits best (no code change, wrong location, wrong fix, partial fix, broke existing tests,
+   ran out, unverified claim, environment trouble) and, for judge arms, whether judge friction stopped
+   the agent short of a fix. Facts come from the logs; about $0.00004 per trial. The viewer shows the
+   label and lets you filter by cause.
+10. **Tear down.** Stop the pod (it bills until stopped or terminated) and `gcp_vm.sh stop` (disk only)
    or `delete`.
 
 ## Lessons (each cost time once)
+
+- SWE-bench images activate the repository's environment in `~/.bashrc` (`conda activate testbed`) and
+  the official harness runs `bash -c 'source ~/.bashrc && ...'`. OpenCode's bash tool runs
+  non-interactive `bash -c`, which skips `~/.bashrc`, so the agent got conda's base env: about a third
+  of trials hit `ModuleNotFoundError` for the repo's own dependencies. `harbor_agent.py` sets
+  `BASH_ENV=$HOME/.bashrc` (what mini-SWE-agent, the leaderboard's scaffold, does). Check
+  `which python` in a trial before trusting a run: it must be `/opt/miniconda3/envs/testbed/bin/python`.
 
 - Measure GPU load with vLLM's `/metrics` over a window: prefix-cache hit rate, time to first token,
   queue time and preemptions. Requests "running" says little; the KV cache is the real limit.
