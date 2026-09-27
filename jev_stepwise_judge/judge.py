@@ -102,6 +102,80 @@ def step_questions(f):
     return q
 
 
+def report_questions(f, report):
+    """Direction questions plus checks of the agent's own report and its next step."""
+    q = direction_questions(f)
+    q["claims_supported"] = {
+        "type": "noul",
+        "instructions": ("Are the claims in `agent_report` (what the agent says it learned, changed, finished and "
+                         "verified) supported by the observed evidence in `knowledge`, `workspace` and "
+                         "`recent_steps`?"),
+        "criteria": {"true": "The evidence backs the report.",
+                     "false": "The report claims knowledge, changes, completion or verification the evidence "
+                              "does not show, or contradicts it."},
+    }
+    if report.get("next_step"):
+        q["next_step_sound"] = {
+            "type": "noul",
+            "instructions": ("Given the evidence and `goal.current`, is `agent_report.next_step` a sensible next "
+                             "action for the agent?"),
+            "criteria": {"true": "A careful engineer would do this next.",
+                         "false": "It is premature, redundant, mistaken, off-goal or needlessly risky right now."},
+        }
+    if report["knowledge"]["open_questions"] and report.get("next_step"):
+        q["questions_block_step"] = {
+            "type": "noul",
+            "instructions": ("Must one of `agent_report.knowledge.open_questions` be answered before "
+                             "`agent_report.next_step` can be done correctly?"),
+        }
+    return q
+
+
+def judge_report(st, cfg):
+    """set_state: judge the agent's own report together with the observed state.
+    -> direction, a verdict on the agent's intended next step, and mismatches."""
+    rep = st["report"]
+    f = S.facts(st)
+    t0 = time.time()
+    resp = jev.ask(S.to_jev_state(st, cfg), report_questions(f, rep), cfg["model"], cfg["timeout_s"])
+    answers = resp.get("answers", {})
+    n = {k: v.get("noul") for k, v in answers.items() if v.get("type") == "noul"}
+    d = direction_from(answers, f, st)
+    mismatches = list(f.get("report_mismatches") or [])
+    if n.get("claims_supported", 1.0) < 0.4 and not mismatches:
+        mismatches.append("the report claims things the observed evidence does not show (p=%.2f)"
+                          % n["claims_supported"])
+    if rep["believes_goal_done"] and (n.get("current_goal_done") or 1.0) < 0.5:
+        mismatches.append("believes the current goal is done, but the evidence says it is not (p=%.2f)"
+                          % n["current_goal_done"])
+
+    verdict, why = "go ahead", []
+    if rep["next_step"]:
+        if n.get("next_step_sound", 1.0) < 0.5:
+            verdict = "reconsider"
+            why.append("the intended next step does not look sensible now (p=%.2f)" % n["next_step_sound"])
+        if n.get("questions_block_step", 0) >= 0.7:
+            verdict = "reconsider"
+            why.append("answer your open questions first")
+        if mismatches and d["direction"] in ("run_verification", "fix_failure", "gather_knowledge"):
+            verdict = "reconsider"
+    else:
+        verdict = "follow the direction"
+    if mismatches:
+        why.append("your report does not match the evidence")
+    return {
+        "direction": d,
+        "summary": direction_text(d),
+        "next_step": rep["next_step"] or None,
+        "next_step_verdict": verdict,
+        "why": why,
+        "mismatches": mismatches,
+        "answers": jev.summarize(answers),
+        "ms": int((time.time() - t0) * 1000),
+        "model": resp.get("model"),
+    }
+
+
 def stop_questions():
     return {"finished": {
         "type": "noul",
@@ -152,6 +226,9 @@ def suggestions(direction, f, st):
     elif direction in ("finish", "ship"):
         if f["unverified_edits"]:
             out.append("verify first: %d edited file(s) untested" % len(f["unverified_edits"]))
+    age = f.get("agent_report_age_steps")
+    if direction in ("advance_goal", "finish", "fix_failure", "ship") and (age is None or age > 12):
+        out.append("report your state with the MCP tool set_state before moving on")
     return out
 
 

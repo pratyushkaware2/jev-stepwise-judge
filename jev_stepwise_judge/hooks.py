@@ -120,8 +120,9 @@ def handle(h, cfg):
             S.save(st)
         if remind and cfg["mode"] != "shadow":
             _context(ev, "keep a todo list for this task (one item per goal, one in_progress, mark items completed "
-                         "only when done and verified). The judge tracks your goals from it. Ask the "
-                         "jev-stepwise-judge MCP tool get_direction when unsure where to go next.")
+                         "only when done and verified). Your state is being recorded; at the joints you choose "
+                         "(goal done, a failure, before finishing, when unsure) call the jev-stepwise-judge MCP tool "
+                         "set_state with your own view and intended next step to get a direction.")
         return
 
     if ev == "PreToolUse":
@@ -132,8 +133,23 @@ def handle(h, cfg):
             if not st["task"] and h["transcript"]:
                 st["task"] = transcript_task(h["transcript"])[:4000]
             rec = S.on_pre(st, h["tool"], h["input"], h["tool_use_id"])
+            need = _report_required(st, rec, cfg)
+            if need and cfg["mode"] != "shadow":
+                rec["status"] = "blocked"
+            elif rec["kind"] in S.ACTING_KINDS:
+                st["last_acting_seq"] = rec["seq"]
             S.save(st)
-        if rec["kind"] in cfg["skip_kinds"]:
+        if need:
+            log({"agent": agent, "event": ev, "kind": rec["kind"], "required": "set_state",
+                 "blocked": cfg["mode"] != "shadow"})
+            if cfg["mode"] != "shadow":
+                _out({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                             "permissionDecisionReason": "[jev-stepwise-judge] " + need}})
+                return
+        auto = cfg["auto_judge"]
+        if auto == "off" or rec["kind"] in cfg["skip_kinds"]:
+            return
+        if auto == "gates" and not _is_gate(st, rec):
             return
         if S.is_sensitive(rec["summary"] + " " + " ".join(rec["paths"]), cfg["sensitive"]):
             log({"agent": agent, "event": ev, "kind": rec["kind"], "skipped": "sensitive"})
@@ -171,9 +187,11 @@ def handle(h, cfg):
             unknown = rec["kind"] in ("test", "build") and rec.get("verification") == "unknown"
             S.save(st)
         notes = list(outbox)
-        if unknown and cfg["classify_unknown_results"] and not S.is_sensitive(rec["summary"], cfg["sensitive"]):
+        if (unknown and cfg["auto_judge"] != "off" and cfg["classify_unknown_results"]
+                and not S.is_sensitive(rec["summary"], cfg["sensitive"])):
             _classify_result(h, rec, cfg)
-        push = (rec["kind"] in PUSH_KINDS or rec["status"] == "error") and cfg["mode"] != "shadow"
+        push = ((rec["kind"] in PUSH_KINDS or rec["status"] == "error") and cfg["mode"] != "shadow"
+                and cfg["auto_judge"] == "every_step")
         if push and not S.is_sensitive(rec["summary"] + " " + " ".join(rec["paths"]), cfg["sensitive"]):
             try:
                 with locked(agent, sid):
@@ -195,9 +213,19 @@ def handle(h, cfg):
             _context("PostToolUse", " | ".join(notes))
         return
 
-    if ev in ("Stop", "SubagentStop") and cfg["stop_gate"] and ev == "Stop":
+    if ev == "Stop":
         with locked(agent, sid):
             st = S.load(agent, sid, h["cwd"])
+        needs_report = (cfg["require_set_state"] in ("joints", "every_step") and not S.report_is_fresh(st)
+                        and st.get("last_acting_seq", 0) > 0)
+        if needs_report and not h["stop_active"] and cfg["mode"] != "shadow":
+            log({"agent": agent, "event": ev, "required": "set_state", "blocked": True})
+            _out({"decision": "block", "reason": "[jev-stepwise-judge] " + REPORT_ASK % cfg["require_set_state"]
+                  + " Before stopping, set believes_goal_done / believes_verified honestly and use next_step "
+                    "to say what you will report to the user."})
+            return
+        if not (cfg["stop_gate"] and cfg["auto_judge"] in ("gates", "every_step")):
+            return
         if h["stop_active"] or st.get("stop_blocks", 0) >= 1:
             return
         try:
@@ -216,6 +244,33 @@ def handle(h, cfg):
             _out({"decision": "block", "reason": "[jev-stepwise-judge] " + msg})
         else:
             _out({"systemMessage": "[jev-stepwise-judge] " + msg})
+
+
+REPORT_ASK = ("Call the jev-stepwise-judge MCP tool set_state first (require_set_state=%s): report current_goal, "
+              "what you learned and still don't know, what you changed / still must change / must run, whether you "
+              "believe the goal is done and verified, and this step as next_step. It returns the direction and a "
+              "verdict on this step; then retry.")
+
+
+def _report_required(st, rec, cfg):
+    """Message if this step needs a fresh set_state report first, else None. Code only."""
+    policy = cfg.get("require_set_state", "agent")
+    if policy == "agent" or S.report_is_fresh(st):
+        return None
+    if policy == "every_step":
+        planning = rec["kind"] == "goal_update" and not S.facts(st, rec).get("marks_current_goal_completed")
+        if rec["kind"] in S.ACTING_KINDS and not planning:
+            return REPORT_ASK % policy
+    elif policy == "joints" and _is_gate(st, rec):
+        return REPORT_ASK % policy
+    return None
+
+
+def _is_gate(st, rec):
+    """High-stakes moments judged under auto_judge=gates."""
+    if rec["kind"] in ("vcs_commit", "vcs_push"):
+        return True
+    return rec["kind"] == "goal_update" and bool(S.facts(st, rec).get("marks_current_goal_completed"))
 
 
 def _classify_result(h, rec, cfg):

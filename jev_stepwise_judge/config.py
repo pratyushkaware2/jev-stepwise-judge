@@ -20,9 +20,26 @@ DEFAULTS = {
     ],
     # your own additions (kept out of the defaults so they stay private)
     "extra_sensitive_path_patterns": [],
+    # When the hooks call Jev on their own. The hooks always record state (local,
+    # no network); by default the agent decides when to be judged (MCP set_state).
+    #   off         record only; judgement happens when the agent calls set_state / get_direction
+    #   gates       also judge the high-stakes moments: marking a goal completed,
+    #               commit / push, and stopping with work open
+    #   every_step  judge every non-read step and push directions after tests, builds,
+    #               goal changes and failures
+    "auto_judge": "off",
+    # How often the agent itself must report its state (MCP set_state) before acting.
+    # Enforced by the hooks in code (no Jev call); a missing report blocks the step
+    # in advise and enforce modes alike, with instructions for what to report.
+    #   agent       never required; the agent calls set_state when it judges useful
+    #   joints      required before marking a goal completed, commit / push, and stopping
+    #   every_step  required before every acting step (edit, run, test, build, commit,
+    #               completing a goal); reads, searches and plain todo planning are free
+    "require_set_state": "agent",
     # ask Jev whether a test/build output passed when exit status is unknown
+    # (only when auto_judge is not off)
     "classify_unknown_results": True,
-    # judge the agent's attempt to stop while goals or verification are open
+    # with auto_judge gates / every_step: judge an attempt to stop while work is open
     "stop_gate": True,
     "thresholds": {},
 }
@@ -62,6 +79,10 @@ def load():
     th.update(cfg.get("thresholds") or {})
     cfg["thresholds"] = th
     cfg["sensitive"] = list(cfg.get("sensitive_path_patterns") or []) + list(cfg.get("extra_sensitive_path_patterns") or [])
+    if os.environ.get("JEV_STEPWISE_REQUIRE"):
+        cfg["require_set_state"] = os.environ["JEV_STEPWISE_REQUIRE"]
+    if os.environ.get("JEV_STEPWISE_AUTO"):
+        cfg["auto_judge"] = os.environ["JEV_STEPWISE_AUTO"]
     if os.environ.get("JEV_STEPWISE_MODE"):
         cfg["mode"] = os.environ["JEV_STEPWISE_MODE"]
     if os.environ.get("JEV_STEPWISE_DISABLE"):

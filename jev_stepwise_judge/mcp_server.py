@@ -15,11 +15,37 @@ PROTOCOL = "2025-06-18"
 SESSION_PROP = {"session": {"type": "string", "description": "Session id; omit to use this agent's own session."}}
 
 TOOLS = [
+    {"name": "set_state",
+     "description": ("Report your own view of your state, then get judged. Call this at every joint: before "
+                     "moving to the next goal, after a failure, before finishing, and whenever unsure. Give what "
+                     "you know, what you changed and still must change, which goal you are on, whether you believe "
+                     "it is done and verified, and the next step you intend. Jev checks your report against the "
+                     "observed evidence (files read, test/build results, edits, todo list) and returns: the "
+                     "direction to move in, a verdict on your intended next step, and any mismatches between your "
+                     "claims and the evidence. Commands in workspace.to_run are tracked until they succeed."),
+     "inputSchema": {"type": "object", "properties": {
+         "current_goal": {"type": "string", "description": "The todo item you are working on."},
+         "knowledge": {"type": "object", "properties": {
+             "learned": {"type": "array", "items": {"type": "string"},
+                         "description": "Facts you established (root cause, where code lives, what output said)."},
+             "open_questions": {"type": "array", "items": {"type": "string"},
+                                "description": "What you still do not know."}}},
+         "workspace": {"type": "object", "properties": {
+             "changed": {"type": "array", "items": {"type": "string"}, "description": "Changes made so far."},
+             "still_required": {"type": "array", "items": {"type": "string"},
+                                "description": "Changes the goal still needs."},
+             "to_run": {"type": "array", "items": {"type": "string"},
+                        "description": "Commands that still have to run (tests, builds, migrations)."}}},
+         "believes_goal_done": {"type": "boolean"},
+         "believes_verified": {"type": "boolean",
+                               "description": "True only if tests/builds have passed after your last edit."},
+         "next_step": {"type": "string", "description": "The step you intend to take next, in one line."},
+         **SESSION_PROP}, "required": ["current_goal", "next_step"], "additionalProperties": False}},
     {"name": "get_direction",
      "description": ("Ask Jev which direction to move in next, judged from your tracked knowledge (files read, "
                      "test/build results, processes), workspace (edits made, unverified edits, required changes) "
                      "and goal state (todo list). Returns the direction, its confidence, concrete next actions and "
-                     "alternatives. Call it when you finish a goal, after a failure, or when unsure what to do next."),
+                     "alternatives. Prefer set_state, which also checks your own report; use this for a quick look."),
      "inputSchema": {"type": "object", "properties": dict(SESSION_PROP), "additionalProperties": False}},
     {"name": "get_state",
      "description": ("Your tracked agent state as the judge sees it: current goal and progress, files known, "
@@ -138,6 +164,25 @@ class Server:
                 "outstanding_required_edits": f["outstanding_required_edits"],
                 "outstanding_required_runs": f["outstanding_required_runs"]}
 
+    def set_state(self, args):
+        cfg = config.load()
+        st = self.session(args.get("session"))
+        with hooks.locked(st["agent"], st["session"]):
+            st = S.load(st["agent"], st["session"])
+            S.set_report(st, args)
+            S.save(st)
+        if S.is_sensitive(json.dumps(st["report"]), cfg["sensitive"]):
+            return {"recorded": True, "judged": False, "why": "the report mentions a sensitive path; not sent to Jev"}
+        res = judge.judge_report(st, cfg)
+        with hooks.locked(st["agent"], st["session"]):
+            fresh = S.load(st["agent"], st["session"])
+            fresh["last_direction"] = res["direction"]["direction"]
+            S.save(fresh)
+        hooks.log({"agent": st["agent"], "event": "set_state", "direction": res["direction"]["direction"],
+                   "verdict": res["next_step_verdict"], "mismatches": len(res["mismatches"]), "ms": res["ms"]})
+        res["direction"].pop("alternatives", None)
+        return res
+
     # ----------------------------------------------------------- protocol
     def handle(self, msg):
         method, mid = msg.get("method"), msg.get("id")
@@ -149,7 +194,9 @@ class Server:
                                      "serverInfo": {"name": "jev-stepwise-judge", "version": __version__},
                                      "instructions": ("Tracks your knowledge, workspace and goal state from hooks and "
                                                       "asks TypeSafe Jev which direction to move next. Keep a todo "
-                                                      "list; call get_direction when a goal ends or something fails.")})
+                                                      "list. At every joint (goal done, failure, before finishing) "
+                                                      "call set_state with your own view and intended next step; "
+                                                      "it returns the direction and a verdict.")})
         if method == "ping":
             return self.result(mid, {})
         if method == "tools/list":

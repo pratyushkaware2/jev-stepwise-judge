@@ -53,6 +53,7 @@ def new_state(agent, session, cwd):
         "workspace": {"edits": {}, "last_edit_seq": 0, "required_edits": [], "required_runs": []},
         "goal": {"todos": [], "updated_seq": 0, "source": None},
         "steps": [], "pending": {}, "outbox": [], "stop_blocks": 0, "last_direction": None,
+        "report": None,  # the agent's own view of its state (MCP set_state)
     }
 
 
@@ -150,6 +151,11 @@ def _norm(path, cwd):
     if cwd and not os.path.isabs(path):
         path = os.path.join(cwd, path)
     return os.path.normpath(path)
+
+
+def _same_goal(a, b):
+    wa, wb = set(re.findall(r"\w{3,}", a.lower())), set(re.findall(r"\w{3,}", b.lower()))
+    return bool(wa and wb) and len(wa & wb) / min(len(wa), len(wb)) >= 0.5
 
 
 def _rel(path, cwd):
@@ -266,6 +272,16 @@ def on_post(st, tool, tool_use_id, event, response):
     return rec
 
 
+ACTING_KINDS = {"edit", "test", "build", "run_process", "stop_process", "vcs_commit", "vcs_push", "goal_update",
+                "shell", "external", "delegate"}
+
+
+def report_is_fresh(st):
+    """Has the agent reported (set_state) since its last acting step?"""
+    rep = st.get("report")
+    return bool(rep) and rep["seq"] > st.get("last_acting_seq", 0)
+
+
 def set_plan(st, todos=None, required_edits=None, required_runs=None):
     """Explicit plan from the agent (MCP set_plan): goals and required workspace changes."""
     if todos is not None:
@@ -285,6 +301,32 @@ def set_plan(st, todos=None, required_edits=None, required_runs=None):
             {"command": r.get("command") if isinstance(r, dict) else str(r),
              "why": (r.get("why") or "")[:200] if isinstance(r, dict) else "", "done": False}
             for r in required_runs][:20]
+
+
+def set_report(st, report):
+    """The agent's own account of its state (MCP set_state). Kept apart from the
+    observed state: it is a claim to check against the evidence, not a fact.
+    Commands it says still have to run become tracked required runs."""
+    def _list(v, n=12):
+        return [str(x)[:300] for x in (v or [])][:n] if isinstance(v, list) else ([str(v)[:300]] if v else [])
+    k, w = report.get("knowledge") or {}, report.get("workspace") or {}
+    st["seq"] += 1  # a report is newer than every step before it
+    st["report"] = {
+        "seq": st["seq"],
+        "current_goal": str(report.get("current_goal") or "")[:300],
+        "knowledge": {"learned": _list(k.get("learned")), "open_questions": _list(k.get("open_questions"), 8)},
+        "workspace": {"changed": _list(w.get("changed")), "still_required": _list(w.get("still_required")),
+                      "to_run": _list(w.get("to_run"), 8)},
+        "believes_goal_done": bool(report.get("believes_goal_done")),
+        "believes_verified": bool(report.get("believes_verified")),
+        "next_step": str(report.get("next_step") or "")[:400],
+    }
+    known = {r["command"].strip() for r in st["workspace"]["required_runs"]}
+    for cmd in st["report"]["workspace"]["to_run"]:
+        if cmd.strip() and cmd.strip() not in known:
+            st["workspace"]["required_runs"].append({"command": cmd.strip(), "why": "declared in set_state",
+                                                     "done": False})
+    st["workspace"]["required_runs"] = st["workspace"]["required_runs"][-20:]
 
 
 # -------------------------------------------------------------------- facts
@@ -316,6 +358,24 @@ def facts(st, proposed=None):
         "outstanding_required_runs": [r["command"] for r in w["required_runs"] if not r.get("done")][:8],
         "recent_errors": len([s for s in st["steps"][-6:] if s.get("status") == "error"]),
     }
+    rep = st.get("report")
+    f["has_agent_report"] = bool(rep)
+    f["agent_report_age_steps"] = (st["seq"] - rep["seq"]) if rep else None
+    if rep:
+        mism = []
+        if rep["believes_verified"] and unverified:
+            mism.append("claims its work is verified, but %d edited file(s) have no passing test/build since "
+                        "their last edit" % len(unverified))
+        if rep["believes_verified"] and f["last_verification_failed"]:
+            mism.append("claims its work is verified, but the last test/build failed")
+        if rep["believes_verified"] and not last_ver and w["edits"]:
+            mism.append("claims its work is verified, but no test or build has run")
+        if rep["believes_goal_done"] and cur and cur["status"] == "in_progress" and f["unverified_edits"]:
+            mism.append("believes '%s' is done while its edits are unverified" % cur["content"][:60])
+        if rep["current_goal"] and cur and not _same_goal(rep["current_goal"], cur["content"]):
+            mism.append("reports working on '%s' but the todo list's current goal is '%s'"
+                        % (rep["current_goal"][:60], cur["content"][:60]))
+        f["report_mismatches"] = mism
     if proposed:
         f["proposed_kind"] = proposed["kind"]
         if proposed["kind"] == "edit":
@@ -393,6 +453,12 @@ def to_jev_state(st, cfg, proposed=None):
         "facts": facts(st, proposed),
         "recent_steps": recent,
     }
+    rep = st.get("report")
+    if rep:
+        state["agent_report"] = {x: rep[x] for x in ("current_goal", "knowledge", "workspace", "believes_goal_done",
+                                                     "believes_verified", "next_step")}
+        state["agent_report"]["note"] = ("The agent's own account of its state: claims to check against `knowledge`, "
+                                         "`workspace` and `recent_steps`, not evidence.")
     cur = steps.current_goal(g["todos"])
     state["goal"]["current"] = cur["content"] if cur else "(no todo list: the whole `task`)"
     if proposed:

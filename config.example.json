@@ -1,5 +1,7 @@
 {
   "mode": "advise",
+  "require_set_state": "agent",
+  "auto_judge": "off",
   "model": "jev-1.13.0",
   "timeout_s": 3.0,
   "skip_kinds": ["read", "search", "web", "vcs_read", "meta"],

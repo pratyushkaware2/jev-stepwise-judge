@@ -30,7 +30,18 @@ you: "parse() drops trailing tokens when input ends with a comma. Fix it and add
 ```
 
 That transcript is real output from [`examples/simulated_session.py`](examples/simulated_session.py)
-against the live API (enforce mode; p50 latency 173 ms).
+against the live API. It uses enforce mode and `auto_judge=every_step`, so every step is judged; the p50 latency
+was 173 ms. By default the judge is quieter: it records state silently, and **the agent decides when to be
+judged** by reporting its own view with `set_state`:
+
+```
+set_state {current_goal: "Fix parse() trailing comma", believes_goal_done: true, believes_verified: true,
+           next_step: "mark it completed and start the regression test"}      # but the last pytest run failed
+->  next: fix_failure (0.97) - Do: failing: pytest -> AssertionError: [''] != []
+    next_step_verdict: reconsider (the intended next step does not look sensible now, p=0.09)
+    mismatches: claims its work is verified, but the last test/build failed;
+                believes the current goal is done, but the evidence says it is not (p=0.03)
+```
 
 ## The idea: agent state → direction
 
@@ -78,21 +89,47 @@ instead of moving on after a red run.
 ## How it plugs in
 
 ```
-agent ──hooks──▶ jev-stepwise-judge hook ──▶ agent state (per session, ~/.local/state)
-  │                     │  PreToolUse: judge the step against the state → advise / deny
-  │                     │  PostToolUse: update state; after tests, builds, goal changes
-  │                     │               and failures, push the next direction
-  │                     │  Stop: stop gate
-  └──MCP──▶ jev-stepwise-judge mcp ──▶ same state: get_direction, get_state,
-                                        judge_step, choose_next, set_plan
+agent ──hooks──▶ jev-stepwise-judge hook ──▶ recorded state (per session, ~/.local/state)
+  │                     (records every prompt, step and result; local, no network)
+  │
+  └──MCP──▶ set_state {the agent's own view + intended next step}
+                 └─▶ Jev: report vs evidence ─▶ direction + next-step verdict + mismatches
+            get_state · get_direction · judge_step · choose_next · set_plan
 ```
 
-- **Hooks** see every prompt, tool call and result, so the state is accurate without the
-  agent doing anything. Claude Code, Codex and Grok CLI use Claude-style hook JSON.
-  OpenCode gets a small plugin shim.
-- **The MCP server** lets the agent pull a direction when it wants one, judge a step it is
-  considering, rank options, and declare required edits and runs. It finds its own
-  session through the agent process it shares with the hooks.
+- **Hooks** see every prompt, tool call and result, so the recorded state is exact and
+  costs nothing. Claude Code, Codex and Grok CLI use Claude-style hook JSON. OpenCode
+  gets a small plugin shim.
+- **`set_state`** is the agent's own account: what it learned and still doesn't know,
+  what it changed and still must change or run, whether it believes the goal is done and
+  verified, and its intended next step. The report is judged *against* the recorded evidence.
+  Exact contradictions are caught in code, for example "claims verified, but the last test
+  failed". Jev judges the rest: whether the claims are supported, whether the goal is really
+  done, whether the next step is sound, and which direction to take.
+- **The MCP server** also offers `get_direction` (recorded state only), `judge_step`,
+  `choose_next` and `set_plan`. It finds its own session through the agent process it
+  shares with the hooks.
+
+### When judging happens
+
+Two settings in `~/.config/jev-stepwise-judge/config.json`:
+
+| `require_set_state` | The agent must report (`set_state`) … |
+| --- | --- |
+| `agent` (default) | never required. The agent decides when a direction is useful |
+| `joints` | before marking a goal completed, committing / pushing, and stopping |
+| `every_step` | before every acting step (edit, run, test, build, commit, completing a goal). Reads, searches and plain todo planning stay free |
+
+The mandate is checked in code by the hooks (no Jev call). A missing report **blocks** the
+step, in advise and enforce mode alike, with instructions for what to report.
+
+| `auto_judge` | The hooks call Jev on their own … |
+| --- | --- |
+| `off` (default) | never. The hooks only record state |
+| `gates` | at the high-stakes moments: marking a goal completed, commit / push, stopping with work open |
+| `every_step` | on every non-read step, and they push a direction after tests, builds, goal changes and failures |
+
+Environment overrides: `JEV_STEPWISE_REQUIRE`, `JEV_STEPWISE_AUTO`, `JEV_STEPWISE_MODE`.
 - **The skill** ([`skills/jev-stepwise-judge/SKILL.md`](skills/jev-stepwise-judge/SKILL.md))
   tells the agent the rules. **A todo list is mandatory**: one goal per item, one
   in_progress, and an item is completed only when done and verified. The skill also covers
@@ -128,6 +165,8 @@ Agent differences, handled for you:
 
 ## Modes
 
+`mode` sets what happens to the verdicts that Jev-based judging produces (`auto_judge`):
+
 | Mode | Behaviour |
 | --- | --- |
 | `advise` (default) | Directions and advice reach the agent; nothing is blocked (denies become advice) |
@@ -148,6 +187,7 @@ with `JEV_STEPWISE_MODE=enforce`, or turn it off with `JEV_STEPWISE_DISABLE=1`. 
 - `skip_kinds` lists step kinds that are recorded but never judged (by default reads,
   searches and web lookups).
 - `extra_sensitive_path_patterns` holds your private regexes.
+- `require_set_state` and `auto_judge` set when judging happens (see above).
 
 ## Privacy
 

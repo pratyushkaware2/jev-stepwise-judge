@@ -49,7 +49,8 @@ class TempState(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = mock.patch.dict(os.environ, {"JEV_STEPWISE_STATE": self.tmp.name,
                                                 "JEV_STEPWISE_CONFIG": os.path.join(self.tmp.name, "none.json"),
-                                                "JEV_STEPWISE_MODE": "enforce"})
+                                                "JEV_STEPWISE_MODE": "enforce",
+                                                "JEV_STEPWISE_AUTO": "every_step"})
         self.env.start()
         self.cfg = config.load()
 
@@ -337,6 +338,85 @@ class TestHooks(TempState):
         self.assertIsNone(r)
 
 
+class TestSetState(TempState):
+    def hook(self, payload, fake=None):
+        out = io.StringIO()
+        with mock.patch.object(jev, "ask", fake or FakeJev()), redirect_stdout(out):
+            with mock.patch("sys.stdin", io.StringIO(json.dumps(payload))):
+                hooks.main([])
+        return json.loads(out.getvalue()) if out.getvalue().strip() else None
+
+    def pre(self, sid, tool, inp, uid):
+        return self.hook({"hook_event_name": "PreToolUse", "session_id": sid, "cwd": "/p", "tool_name": tool,
+                          "tool_input": inp, "tool_use_id": uid})
+
+    def post(self, sid, tool, uid, resp):
+        return self.hook({"hook_event_name": "PostToolUse", "session_id": sid, "cwd": "/p", "tool_name": tool,
+                          "tool_use_id": uid, "tool_response": resp})
+
+    def report(self, sid, **kw):
+        srv = mcp_server.Server()
+        srv.pids, srv.cwd = [], "/p"
+        body = {"current_goal": "fix parser", "next_step": "edit parse.py", **kw}
+        with mock.patch.object(jev, "ask", FakeJev(direction=choice("edit_workspace"), next_step_sound=noul(0.9),
+                                                   claims_supported=noul(0.9))):
+            return srv.set_state(dict(body, session=sid))
+
+    def plan(self, sid):
+        todo = {"todos": [{"content": "fix parser", "status": "in_progress"}]}
+        self.pre(sid, "TodoWrite", todo, "t")
+        self.post(sid, "TodoWrite", "t", {})
+
+    def test_default_agent_decides(self):
+        with mock.patch.dict(os.environ, {"JEV_STEPWISE_AUTO": "off"}):
+            fake = FakeJev()
+            r = self.hook({"hook_event_name": "PreToolUse", "session_id": "a1", "cwd": "/p", "tool_name": "Edit",
+                           "tool_input": {"file_path": "/p/a.py"}, "tool_use_id": "1"}, fake)
+            self.assertIsNone(r)
+            self.assertEqual(fake.calls, [])  # no Jev call: state is only recorded
+            self.assertEqual(S.load("claude", "a1")["steps"][-1]["kind"], "edit")
+
+    def test_every_step_mandate(self):
+        env = {"JEV_STEPWISE_AUTO": "off", "JEV_STEPWISE_REQUIRE": "every_step"}
+        with mock.patch.dict(os.environ, env):
+            self.plan("m1")  # plain planning is free
+            r = self.pre("m1", "Edit", {"file_path": "/p/a.py"}, "1")
+            self.assertEqual(r["hookSpecificOutput"]["permissionDecision"], "deny")
+            self.assertIn("set_state", r["hookSpecificOutput"]["permissionDecisionReason"])
+            self.assertIsNone(self.pre("m1", "Read", {"file_path": "/p/a.py"}, "2"))  # reads are free
+            self.report("m1")
+            self.assertIsNone(self.pre("m1", "Edit", {"file_path": "/p/a.py"}, "3"))
+            self.post("m1", "Edit", "3", {"success": True})
+            r = self.pre("m1", "Bash", {"command": "pytest -q"}, "4")
+            self.assertEqual(r["hookSpecificOutput"]["permissionDecision"], "deny")  # one report per acting step
+
+    def test_joints_mandate(self):
+        env = {"JEV_STEPWISE_AUTO": "off", "JEV_STEPWISE_REQUIRE": "joints"}
+        with mock.patch.dict(os.environ, env):
+            self.plan("j1")
+            self.assertIsNone(self.pre("j1", "Edit", {"file_path": "/p/a.py"}, "1"))
+            self.post("j1", "Edit", "1", {"success": True})
+            r = self.pre("j1", "Bash", {"command": "git commit -am x"}, "2")
+            self.assertEqual(r["hookSpecificOutput"]["permissionDecision"], "deny")
+            r = self.hook({"hook_event_name": "Stop", "session_id": "j1", "cwd": "/p", "stop_hook_active": False})
+            self.assertEqual(r["decision"], "block")
+            self.report("j1")
+            self.assertIsNone(self.hook({"hook_event_name": "Stop", "session_id": "j1", "cwd": "/p"}))
+
+    def test_report_checked_against_evidence(self):
+        with mock.patch.dict(os.environ, {"JEV_STEPWISE_AUTO": "off"}):
+            self.plan("r1")
+            self.pre("r1", "Edit", {"file_path": "/p/a.py"}, "1")
+            self.post("r1", "Edit", "1", {"success": True})
+            self.pre("r1", "Bash", {"command": "pytest -q"}, "2")
+            self.post("r1", "Bash", "2", {"stdout": "1 failed", "exit_code": 1})
+            res = self.report("r1", believes_verified=True, believes_goal_done=True,
+                              workspace={"to_run": ["make lint"]}, next_step="mark fix parser completed")
+            self.assertTrue(any("last test/build failed" in m for m in res["mismatches"]))
+            self.assertEqual(res["direction"]["direction"], "edit_workspace")
+            self.assertIn("make lint", S.facts(S.load("claude", "r1"))["outstanding_required_runs"])
+
+
 class TestMCP(TempState):
     def test_protocol_and_tools(self):
         srv = mcp_server.Server()
@@ -344,7 +424,7 @@ class TestMCP(TempState):
         r = srv.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}})
         self.assertEqual(r["result"]["serverInfo"]["name"], "jev-stepwise-judge")
         names = {t["name"] for t in srv.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]}
-        self.assertEqual(names, {"get_direction", "get_state", "judge_step", "choose_next", "set_plan"})
+        self.assertEqual(names, {"set_state", "get_direction", "get_state", "judge_step", "choose_next", "set_plan"})
         r = srv.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                         "params": {"name": "get_state", "arguments": {}}})
         self.assertTrue(r["result"]["isError"])  # no session yet

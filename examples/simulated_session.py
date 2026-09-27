@@ -4,7 +4,7 @@
     TYPESAFE_API_KEY=... python3 examples/simulated_session.py
 
 Uses a throwaway project and state directory and runs in enforce mode, so you
-can see every verdict: todo-list mandate, goal gate, failure -> fix direction,
+can see every verdict (auto_judge=every_step): todo-list mandate, goal gate, failure -> fix direction,
 push gate, advance-goal direction, stop gate.
 """
 import json
@@ -19,7 +19,8 @@ P = tempfile.mkdtemp(prefix="jsj-proj-")
 os.makedirs(os.path.join(P, "src"))
 with open(os.path.join(P, "src", "parse.py"), "w") as f:
     f.write("def parse(s):\n    return s.split()\n")
-ENV = dict(os.environ, JEV_STEPWISE_STATE=tempfile.mkdtemp(prefix="jsj-state-"), JEV_STEPWISE_MODE="enforce")
+ENV = dict(os.environ, JEV_STEPWISE_STATE=tempfile.mkdtemp(prefix="jsj-state-"), JEV_STEPWISE_MODE="enforce",
+           JEV_STEPWISE_AUTO="every_step")
 n = [0]
 
 
