@@ -41,6 +41,9 @@ DEFAULTS = {
     "classify_unknown_results": True,
     # with auto_judge gates / every_step: judge an attempt to stop while work is open
     "stop_gate": True,
+    # agents that get the one-time "keep a todo list / call set_state" reminder at the
+    # first prompt of a session (the skill's rules in one line). Empty list = nobody.
+    "remind_agents": ["claude", "codex", "grok", "opencode"],
     "thresholds": {},
 }
 
@@ -71,7 +74,7 @@ def config_path():
 PROJECT_FILE = ".jev-stepwise-judge.json"
 # what a project file may set; sensitive patterns can only be added, never removed
 PROJECT_KEYS = {"mode", "require_set_state", "auto_judge", "stop_gate", "skip_kinds", "thresholds",
-                "classify_unknown_results", "recent_steps"}
+                "classify_unknown_results", "recent_steps", "remind_agents"}
 
 
 def project_config(cwd):

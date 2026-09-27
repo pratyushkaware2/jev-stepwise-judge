@@ -7,7 +7,8 @@
   check STEP [--session ID] judge a step you are considering, e.g. check "git push"
   next --task T [--context C] OPT OPT...
                             rank candidate next steps
-  install [AGENT...] [--dry-run]   hooks + MCP + skill for claude codex grok opencode
+  install [AGENT...] [--dry-run] [--no-skill]   hooks + MCP (+ skill) for claude codex grok opencode
+  skill add|remove AGENT...  give or take the skill per agent
   uninstall [AGENT...]      remove exactly what install added
   stats                     summarise the judgment log
   doctor                    check key, API, config and an offline hook round-trip
@@ -125,11 +126,22 @@ def main(argv=None):
         p = sub.add_parser(name)
         p.add_argument("agents", nargs="*", help="claude codex grok opencode (default: all)")
         p.add_argument("--dry-run", action="store_true")
+        if name == "install":
+            p.add_argument("--no-skill", action="store_true", help="hooks + MCP only; do not link the skill")
+    p = sub.add_parser("skill", help="give or take the skill per agent")
+    p.add_argument("action", choices=["add", "remove"])
+    p.add_argument("agents", nargs="+", help="claude codex grok opencode")
+    p.add_argument("--dry-run", action="store_true")
     sub.add_parser("stats")
     sub.add_parser("doctor")
     args = ap.parse_args(argv)
     if args.cmd in ("install", "uninstall"):
-        return install.run(args.agents, remove=args.cmd == "uninstall", dry=args.dry_run)
+        return install.run(args.agents, remove=args.cmd == "uninstall", dry=args.dry_run,
+                           with_skill=not getattr(args, "no_skill", False))
+    if args.cmd == "skill":
+        log = (lambda m: print("[dry-run] would: " + m)) if args.dry_run else print
+        install.skill(args.agents, args.action == "remove", args.dry_run, log)
+        return 0
     fn = {"direction": cmd_direction, "state": cmd_state, "check": cmd_check, "next": cmd_next,
           "stats": cmd_stats, "doctor": cmd_doctor}.get(args.cmd)
     if fn is None:

@@ -32,8 +32,16 @@ PATHS = {
     "opencode_cfg": os.path.join(HOME, ".config", "opencode", "opencode.jsonc"),
     "opencode_plugin": os.path.join(HOME, ".config", "opencode", "plugins", "jev-stepwise-judge.ts"),
 }
-SKILL_DIRS = [os.path.join(HOME, ".claude", "skills"), os.path.join(HOME, ".agents", "skills"),
-              os.path.join(HOME, ".config", "opencode", "skills")]
+# each agent's own skill folder, so the skill can be given to some agents and not others.
+# (~/.agents/skills is shared by Codex, OpenCode and sometimes Grok, so it is not used;
+#  Grok and OpenCode also read ~/.claude/skills, so they get their own copies.)
+SKILL_DIRS = {
+    "claude": os.path.join(HOME, ".claude", "skills"),
+    "codex": os.path.join(HOME, ".codex", "skills"),
+    "grok": os.path.join(HOME, ".grok", "skills"),
+    "opencode": os.path.join(HOME, ".config", "opencode", "skills"),
+}
+LEGACY_SKILL_DIRS = [os.path.join(HOME, ".agents", "skills")]  # used by 0.1-0.2 installs
 
 
 def _read_json(path, default):
@@ -159,24 +167,38 @@ def opencode(remove, dry, log):
     log("opencode plugin written to %s" % plugin)
 
 
-def skill(remove, dry, log):
-    for d in SKILL_DIRS:
-        if not os.path.isdir(os.path.dirname(d)):
-            continue
-        link = os.path.join(d, MARK)
-        if os.path.islink(link) or os.path.exists(link):
-            if os.path.islink(link) and not dry:
-                os.remove(link)
-            elif not os.path.islink(link):
-                log("%s exists and is not a symlink; left alone" % link)
-                continue
-        if not remove and not dry:
+def _link_skill(d, remove, dry, log):
+    link = os.path.join(d, MARK)
+    if os.path.lexists(link):
+        if not os.path.islink(link):
+            log("%s exists and is not a symlink; left alone" % link)
+            return
+        if not dry:
+            os.remove(link)
+    elif remove:
+        return
+    if not remove:
+        if not dry:
             os.makedirs(d, exist_ok=True)
             os.symlink(SKILL_SRC, link)
-        log("skill %s %s" % ("unlinked from" if remove else "linked into", d))
+        log("skill linked into %s" % d)
+    else:
+        log("skill unlinked from %s" % d)
 
 
-def run(agents, remove=False, dry=False, log=print):
+def skill(agents, remove, dry, log):
+    """Link or unlink the skill for these agents only."""
+    for a in agents:
+        d = SKILL_DIRS.get(a)
+        if d and os.path.isdir(os.path.dirname(d)):
+            _link_skill(d, remove, dry, log)
+    for d in LEGACY_SKILL_DIRS:  # the old shared location reaches agents you did not choose
+        link = os.path.join(d, MARK)
+        if os.path.islink(link) and os.path.realpath(link) == os.path.realpath(SKILL_SRC):
+            _link_skill(d, True, dry, log)
+
+
+def run(agents, remove=False, dry=False, log=print, with_skill=True):
     agents = agents or ["claude", "codex", "grok", "opencode"]
     if dry:
         _log = log
@@ -191,7 +213,8 @@ def run(agents, remove=False, dry=False, log=print):
             opencode(remove, dry, log)
         else:
             log("unknown agent: %s" % a)
-    skill(remove, dry, log)
+    if with_skill or remove:
+        skill(agents, remove, dry, log)
     if not remove and "codex" in agents:
         log("codex: open codex and run /hooks to trust the new hooks (codex skips untrusted hooks)")
     return 0

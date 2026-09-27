@@ -486,6 +486,43 @@ class TestProjectConfig(TempState):
             self.assertIn("secret-dir/", cfg["sensitive"])
 
 
+class TestInstallSkill(unittest.TestCase):
+    def test_skill_per_agent_and_legacy_cleanup(self):
+        from jev_stepwise_judge import install
+        with tempfile.TemporaryDirectory() as home:
+            dirs = {a: os.path.join(home, a, "skills") for a in ("claude", "codex", "grok", "opencode")}
+            for d in dirs.values():
+                os.makedirs(os.path.dirname(d))
+            legacy = os.path.join(home, "agents", "skills")
+            os.makedirs(legacy)
+            os.symlink(install.SKILL_SRC, os.path.join(legacy, install.MARK))
+            with mock.patch.object(install, "SKILL_DIRS", dirs), mock.patch.object(install, "LEGACY_SKILL_DIRS", [legacy]):
+                install.skill(["grok", "opencode"], False, False, lambda m: None)
+                self.assertTrue(os.path.islink(os.path.join(dirs["grok"], install.MARK)))
+                self.assertFalse(os.path.lexists(os.path.join(dirs["claude"], install.MARK)))
+                self.assertFalse(os.path.lexists(os.path.join(legacy, install.MARK)))  # shared dir cleaned
+                install.skill(["grok"], True, False, lambda m: None)
+                self.assertFalse(os.path.lexists(os.path.join(dirs["grok"], install.MARK)))
+
+
+class TestReminder(TempState):
+    def test_reminder_only_for_listed_agents(self):
+        cfgp = os.path.join(self.tmp.name, "cfg.json")
+        with open(cfgp, "w") as f:
+            json.dump({"remind_agents": ["grok"]}, f)
+        with mock.patch.dict(os.environ, {"JEV_STEPWISE_CONFIG": cfgp}):
+            outs = []
+            for payload in ({"hook_event_name": "UserPromptSubmit", "session_id": "r1", "cwd": "/p", "prompt": "x"},
+                            {"hookEventName": "user_prompt_submit", "hook_event_name": "UserPromptSubmit",
+                             "sessionId": "r2", "cwd": "/p", "prompt": "x"}):
+                out = io.StringIO()
+                with redirect_stdout(out), mock.patch("sys.stdin", io.StringIO(json.dumps(payload))):
+                    hooks.main([])
+                outs.append(out.getvalue().strip())
+            self.assertEqual(outs[0], "")          # claude: no reminder
+            self.assertIn("todo list", outs[1])    # grok: reminded
+
+
 class TestMCP(TempState):
     def test_protocol_and_tools(self):
         srv = mcp_server.Server()

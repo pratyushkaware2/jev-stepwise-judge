@@ -156,12 +156,17 @@ bin/jev-stepwise-judge install       # hooks + MCP + skill for claude codex grok
 
 `install [claude codex grok opencode]` is idempotent, backs up every JSON file it
 edits (`*.bak-jev-stepwise-<time>`), and `uninstall` removes exactly what it added.
+The skill is linked into each agent's own skill folder, so you can give it to some agents
+and not others: `install --no-skill`, or later `jev-stepwise-judge skill remove claude codex` /
+`skill add grok opencode`. Note that Grok and OpenCode also read `~/.claude/skills/`, and
+Codex and OpenCode read the shared `~/.agents/skills/` (not used by the installer). Which
+agents get the one-line reminder at the start of a session is set by `remind_agents`.
 
 | Agent | Hooks | MCP | Skill |
 | --- | --- | --- | --- |
 | Claude Code | `~/.claude/settings.json` | `claude mcp add -s user` | `~/.claude/skills/` |
-| Codex | `~/.codex/hooks.json`. **Then run `/hooks` in Codex to trust them.** | `codex mcp add` | `~/.agents/skills/` |
-| Grok CLI | `~/.grok/hooks/jev-stepwise-judge.json` (Grok also reads Claude's hooks; identical handlers are de-duplicated) | `grok mcp add -s user` | `~/.agents/skills/` |
+| Codex | `~/.codex/hooks.json`. **Then run `/hooks` in Codex to trust them.** | `codex mcp add` | `~/.codex/skills/` |
+| Grok CLI | `~/.grok/hooks/jev-stepwise-judge.json` (Grok also reads Claude's hooks; identical handlers are de-duplicated) | `grok mcp add -s user` | `~/.grok/skills/` |
 | OpenCode | plugin `~/.config/opencode/plugins/jev-stepwise-judge.ts` | `opencode.jsonc` → `mcp` | `~/.config/opencode/skills/` |
 
 Agent differences, handled for you:

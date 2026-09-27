@@ -10,3 +10,6 @@ config.json
 # private planning notes (kept local, never published)
 bench/PLAN.md
 bench/*.private.md
+
+# benchmark results synced from the bench VM (large, regenerable)
+bench/results/

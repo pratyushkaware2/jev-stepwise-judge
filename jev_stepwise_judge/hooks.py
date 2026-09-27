@@ -119,7 +119,8 @@ def handle(h, cfg):
             st = S.load(agent, sid, h["cwd"])
             S.on_prompt(st, h["prompt"])
             st["pids"] = S.ancestor_pids()
-            remind = not st["goal"]["todos"] and not st.get("reminded")
+            remind = (not st["goal"]["todos"] and not st.get("reminded")
+                      and agent in (cfg.get("remind_agents") or []))
             st["reminded"] = st.get("reminded") or remind
             S.save(st)
         if remind and cfg["mode"] != "shadow":
