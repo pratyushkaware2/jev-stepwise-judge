@@ -1,0 +1,7 @@
+{"budget": 100, "stop_at": 95,
+ "fixed": [],
+ "intervals": [
+  {"what": "GCP bench VM compute e2-custom-24-96GB + external IP", "rate": 0.849, "start": "2026-01-01T00:00:00Z", "end": null},
+  {"what": "GCP bench VM 300 GB pd-balanced disk", "rate": 0.0411, "start": "2026-01-01T00:00:00Z", "end": null},
+  {"what": "Runpod RTX PRO 6000 96GB pod (running, incl. 80 GB volume)", "rate": 1.701, "start": "2026-01-01T00:00:00Z", "end": null}
+ ]}

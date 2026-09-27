@@ -21,8 +21,9 @@ cd ~/bench
 key=$(cat ~/.config/jev-bench/vllm_key)
 pod=$(cat ~/.config/jev-bench/pod_id)
 version=$(cat agent-cache/OPENCODE_VERSION)
+context=${BENCH_CONTEXT:-131072}  # must match vLLM --max-model-len on the pod
 mounts='[{"type":"bind","source":"'"$HOME"'/bench/agent-cache","target":"/opt/agent-cache","read_only":true}]'
-config='{"provider":{"vllm":{"npm":"@ai-sdk/openai-compatible","name":"vLLM","options":{"baseURL":"https://'"$pod"'-8000.proxy.runpod.net/v1","apiKey":"{env:VLLM_API_KEY}"},"models":{"qwen3-coder":{"name":"Qwen3-Coder-30B-A3B-Instruct-FP8","tool_call":true,"limit":{"context":65536,"output":8192}}}}}}'
+config='{"provider":{"vllm":{"npm":"@ai-sdk/openai-compatible","name":"vLLM","options":{"baseURL":"https://'"$pod"'-8000.proxy.runpod.net/v1","apiKey":"{env:VLLM_API_KEY}"},"models":{"qwen3-coder":{"name":"Qwen3-Coder-30B-A3B-Instruct-FP8","tool_call":true,"limit":{"context":'"$context"',"output":8192}}}}}}'
 
 case $bench in
     swe) dataset=swe-bench/swe-bench-verified; prefix=swe-bench/ ;;

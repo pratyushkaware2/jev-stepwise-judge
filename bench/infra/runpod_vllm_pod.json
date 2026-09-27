@@ -1,0 +1,12 @@
+{
+  "_comment": "Runpod pod serving the model (Runpod v2 REST create-pod body; the Runpod MCP create-pod tool takes it as `body`). Replace VLLM_API_KEY with the VM's ~/.config/jev-bench/vllm_key (the proxy URL https://<POD_ID>-8000.proxy.runpod.net is public). Then write the pod id to ~/.config/jev-bench/pod_id on the VM. RTX PRO 6000 96GB: FP8 weights 29 GiB + FP8 KV 55.7 GiB (~1.2M tokens) = 20 agents at 128K with ~90% prefix-cache hits. The host needs CUDA >= 12.9 for this image. If no Workstation Edition is free, 'NVIDIA RTX PRO 6000 Blackwell Server Edition' is the same chip. Drop the _comment key before sending.",
+  "name": "jev-bench-vllm-128k",
+  "cloud": "COMMUNITY",
+  "gpu": {"id": "NVIDIA RTX PRO 6000 Blackwell Workstation Edition", "count": 1, "minCudaVersion": "12.9"},
+  "image": "vllm/vllm-openai:v0.30.0",
+  "args": "--model Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8 --served-model-name qwen3-coder --enable-auto-tool-choice --tool-call-parser qwen3_coder --max-model-len 131072 --kv-cache-dtype fp8 --max-num-seqs 32 --enable-prefix-caching --gpu-memory-utilization 0.92 --download-dir /workspace/hf --host 0.0.0.0 --port 8000",
+  "env": {"VLLM_API_KEY": "<contents of ~/.config/jev-bench/vllm_key>", "HF_HOME": "/workspace/hf"},
+  "ports": ["8000/http"],
+  "disk": 30,
+  "mounts": {"persistent": {"size": 80, "path": "/workspace"}}
+}

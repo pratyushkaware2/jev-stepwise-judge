@@ -90,7 +90,9 @@ def load(jobs, prefix):
     out = {}
     for arm in ARMS:
         rows = []
-        for res in glob.glob(os.path.join(jobs, "%s-%s" % (prefix, arm), "*", "result.json")):
+        pattern = [os.path.join(jobs, "%s-%s" % (prefix, arm), "*", "result.json"),
+                   os.path.join(jobs, "%s-%s-a*" % (prefix, arm), "*", "result.json")]  # lockstep chunks
+        for res in [r for pat in pattern for r in glob.glob(pat)]:
             try:
                 rows.append(trial(os.path.dirname(res)))
             except (OSError, ValueError, KeyError):
