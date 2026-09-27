@@ -6,3 +6,7 @@ __pycache__/
 config.json
 *.key
 .env*
+
+# private planning notes (kept local, never published)
+bench/PLAN.md
+bench/*.private.md
