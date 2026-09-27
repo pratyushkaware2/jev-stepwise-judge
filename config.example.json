@@ -1,0 +1,14 @@
+{
+  "mode": "advise",
+  "model": "jev-1.13.0",
+  "timeout_s": 3.0,
+  "skip_kinds": ["read", "search", "web", "vcs_read", "meta"],
+  "extra_sensitive_path_patterns": ["(^|/)private-notes/", "my-company-secrets"],
+  "stop_gate": true,
+  "thresholds": {
+    "verification_due": 0.7,
+    "goal_incomplete_max": 0.5,
+    "move_conf": 0.7,
+    "push_conf": 0.65
+  }
+}
