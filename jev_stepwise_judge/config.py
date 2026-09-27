@@ -55,6 +55,8 @@ THRESHOLDS = {
     "move_conf": 0.7,              # confidence needed in next_move to give advice
     "finished_min": 0.5,           # stop gate: finished below this -> not done
     "push_conf": 0.65,             # push a direction note after key events only above this
+    "claims_unsupported_max": 0.2,  # set_state: flag the report only when Jev is confident it is unsupported
+    "report_goal_done_max": 0.2,    # set_state: flag "believes done" only when Jev is confident it is not
 }
 
 
@@ -66,7 +68,35 @@ def config_path():
     return os.path.expanduser(os.environ.get("JEV_STEPWISE_CONFIG", "~/.config/jev-stepwise-judge/config.json"))
 
 
-def load():
+PROJECT_FILE = ".jev-stepwise-judge.json"
+# what a project file may set; sensitive patterns can only be added, never removed
+PROJECT_KEYS = {"mode", "require_set_state", "auto_judge", "stop_gate", "skip_kinds", "thresholds",
+                "classify_unknown_results", "recent_steps"}
+
+
+def project_config(cwd):
+    """Nearest .jev-stepwise-judge.json from cwd upwards (stops at $HOME or /)."""
+    if not cwd:
+        return None, {}
+    home = os.path.expanduser("~")
+    d = os.path.abspath(cwd)
+    while True:
+        path = os.path.join(d, PROJECT_FILE)
+        if os.path.isfile(path):
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+                return path, data if isinstance(data, dict) else {}
+            except (OSError, ValueError):
+                return path, {}
+        parent = os.path.dirname(d)
+        if d in (home, parent):
+            return None, {}
+        d = parent
+
+
+def load(cwd=None):
+    """Defaults < user config < project file (nearest to cwd) < environment."""
     cfg = json.loads(json.dumps(DEFAULTS))
     try:
         with open(config_path()) as f:
@@ -75,6 +105,15 @@ def load():
             cfg.update(user)
     except (OSError, ValueError):
         pass
+    path, proj = project_config(cwd)
+    if proj:
+        cfg["project_config"] = path
+        for k, v in proj.items():
+            if k in PROJECT_KEYS:
+                cfg[k] = dict(cfg.get(k) or {}, **v) if k == "thresholds" and isinstance(v, dict) else v
+        extra = proj.get("extra_sensitive_path_patterns")
+        if isinstance(extra, list):
+            cfg["extra_sensitive_path_patterns"] = list(cfg.get("extra_sensitive_path_patterns") or []) + extra
     th = dict(THRESHOLDS)
     th.update(cfg.get("thresholds") or {})
     cfg["thresholds"] = th

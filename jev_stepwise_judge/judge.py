@@ -142,10 +142,11 @@ def judge_report(st, cfg):
     n = {k: v.get("noul") for k, v in answers.items() if v.get("type") == "noul"}
     d = direction_from(answers, f, st)
     mismatches = list(f.get("report_mismatches") or [])
-    if n.get("claims_supported", 1.0) < 0.4 and not mismatches:
+    th = cfg["thresholds"]
+    if n.get("claims_supported", 1.0) <= th["claims_unsupported_max"] and not mismatches:
         mismatches.append("the report claims things the observed evidence does not show (p=%.2f)"
                           % n["claims_supported"])
-    if rep["believes_goal_done"] and (n.get("current_goal_done") or 1.0) < 0.5:
+    if rep["believes_goal_done"] and (n.get("current_goal_done") or 1.0) <= th["report_goal_done_max"]:
         mismatches.append("believes the current goal is done, but the evidence says it is not (p=%.2f)"
                           % n["current_goal_done"])
 

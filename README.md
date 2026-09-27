@@ -121,7 +121,9 @@ Two settings in `~/.config/jev-stepwise-judge/config.json`:
 | `every_step` | before every acting step (edit, run, test, build, commit, completing a goal). Reads, searches and plain todo planning stay free |
 
 The mandate is checked in code by the hooks (no Jev call). A missing report **blocks** the
-step, in advise and enforce mode alike, with instructions for what to report.
+step, in advise and enforce mode alike, with instructions for what to report. A report stays
+valid until **new evidence** arrives (an edit, run, test, build or commit completes). So
+steps sent together in one batch share a report, and todo-list bookkeeping never uses one up.
 
 | `auto_judge` | The hooks call Jev on their own … |
 | --- | --- |
@@ -129,7 +131,13 @@ step, in advise and enforce mode alike, with instructions for what to report.
 | `gates` | at the high-stakes moments: marking a goal completed, commit / push, stopping with work open |
 | `every_step` | on every non-read step, and they push a direction after tests, builds, goal changes and failures |
 
-Environment overrides: `JEV_STEPWISE_REQUIRE`, `JEV_STEPWISE_AUTO`, `JEV_STEPWISE_MODE`.
+Per-project settings: put a `.jev-stepwise-judge.json` in a repository (the nearest one
+above the working directory wins), e.g. `{"require_set_state": "joints", "auto_judge": "gates"}`.
+A project file may set `mode`, `require_set_state`, `auto_judge`, `stop_gate`, `skip_kinds`,
+`thresholds`, `classify_unknown_results` and `recent_steps`. It may add
+`extra_sensitive_path_patterns`, but it can never remove sensitive patterns or change the model.
+
+Environment overrides (strongest): `JEV_STEPWISE_REQUIRE`, `JEV_STEPWISE_AUTO`, `JEV_STEPWISE_MODE`.
 - **The skill** ([`skills/jev-stepwise-judge/SKILL.md`](skills/jev-stepwise-judge/SKILL.md))
   tells the agent the rules. **A todo list is mandatory**: one goal per item, one
   in_progress, and an item is completed only when done and verified. The skill also covers

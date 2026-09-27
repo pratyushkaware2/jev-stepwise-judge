@@ -56,7 +56,11 @@ def locked(agent, session):
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
+_CTX = {}
+
+
 def log(entry):
+    entry = {**_CTX, **entry}
     try:
         os.makedirs(config.state_dir(), mode=0o700, exist_ok=True)
         with open(os.path.join(config.state_dir(), "judgments.jsonl"), "a") as f:
@@ -136,8 +140,6 @@ def handle(h, cfg):
             need = _report_required(st, rec, cfg)
             if need and cfg["mode"] != "shadow":
                 rec["status"] = "blocked"
-            elif rec["kind"] in S.ACTING_KINDS:
-                st["last_acting_seq"] = rec["seq"]
             S.save(st)
         if need:
             log({"agent": agent, "event": ev, "kind": rec["kind"], "required": "set_state",
@@ -217,7 +219,7 @@ def handle(h, cfg):
         with locked(agent, sid):
             st = S.load(agent, sid, h["cwd"])
         needs_report = (cfg["require_set_state"] in ("joints", "every_step") and not S.report_is_fresh(st)
-                        and st.get("last_acting_seq", 0) > 0)
+                        and st.get("last_evidence_seq", 0) > 0)
         if needs_report and not h["stop_active"] and cfg["mode"] != "shadow":
             log({"agent": agent, "event": ev, "required": "set_state", "blocked": True})
             _out({"decision": "block", "reason": "[jev-stepwise-judge] " + REPORT_ASK % cfg["require_set_state"]
@@ -246,10 +248,12 @@ def handle(h, cfg):
             _out({"systemMessage": "[jev-stepwise-judge] " + msg})
 
 
-REPORT_ASK = ("Call the jev-stepwise-judge MCP tool set_state first (require_set_state=%s): report current_goal, "
-              "what you learned and still don't know, what you changed / still must change / must run, whether you "
-              "believe the goal is done and verified, and this step as next_step. It returns the direction and a "
-              "verdict on this step; then retry.")
+REPORT_ASK = ("New results arrived since your last report, so this step needs one first (require_set_state=%s). "
+              "Call the jev-stepwise-judge MCP tool set_state, e.g. {\"current_goal\": \"<todo item>\", "
+              "\"knowledge\": {\"learned\": [...], \"open_questions\": [...]}, \"workspace\": {\"changed\": "
+              "[...], \"still_required\": [...], \"to_run\": [...]}, \"believes_goal_done\": false, "
+              "\"believes_verified\": false, \"next_step\": \"<this step>\"}, then retry this step. "
+              "One report covers every step until the next result comes back; todo updates don't use it up.")
 
 
 def _report_required(st, rec, cfg):
@@ -296,15 +300,16 @@ def _classify_result(h, rec, cfg):
 
 
 def main(argv):
-    cfg = config.load()
-    if cfg["mode"] == "off":
-        return 0
     hint = argv[argv.index("--agent") + 1] if "--agent" in argv else "claude"
     try:
         payload = json.load(sys.stdin)
         h = normalize(payload, hint)
     except (ValueError, AttributeError):
         return 0
+    cfg = config.load(h["cwd"])
+    if cfg["mode"] == "off":
+        return 0
+    _CTX.update(session=h["session"][:12], project=os.path.basename(h["cwd"].rstrip("/")))
     try:
         handle(h, cfg)
     except Exception as e:  # a judge bug must never break the agent

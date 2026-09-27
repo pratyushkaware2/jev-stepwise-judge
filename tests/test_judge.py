@@ -403,6 +403,59 @@ class TestSetState(TempState):
             self.report("j1")
             self.assertIsNone(self.hook({"hook_event_name": "Stop", "session_id": "j1", "cwd": "/p"}))
 
+    def test_parallel_batch_shares_one_report(self):
+        with mock.patch.dict(os.environ, {"JEV_STEPWISE_AUTO": "off", "JEV_STEPWISE_REQUIRE": "every_step"}):
+            self.plan("p1")
+            self.report("p1")
+            self.assertIsNone(self.pre("p1", "Edit", {"file_path": "/p/a.py"}, "1"))
+            self.assertIsNone(self.pre("p1", "Edit", {"file_path": "/p/test_a.py"}, "2"))  # same batch
+            self.post("p1", "Edit", "1", {"success": True})
+            self.post("p1", "Edit", "2", {"success": True})
+            r = self.pre("p1", "Bash", {"command": "pytest -q"}, "3")                       # new evidence came
+            self.assertEqual(r["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_todo_bookkeeping_does_not_stale_a_report(self):
+        with mock.patch.dict(os.environ, {"JEV_STEPWISE_AUTO": "off", "JEV_STEPWISE_REQUIRE": "every_step"}):
+            self.plan("t1")
+            self.report("t1")
+            done = {"todos": [{"content": "fix parser", "status": "completed"}, {"content": "docs", "status": "in_progress"}]}
+            self.assertIsNone(self.pre("t1", "TodoWrite", done, "1"))
+            self.post("t1", "TodoWrite", "1", {})
+            self.assertIsNone(self.pre("t1", "Bash", {"command": "git commit -am x"}, "2"))
+
+    def test_report_accepts_strings_and_json_text(self):
+        with mock.patch.dict(os.environ, {"JEV_STEPWISE_AUTO": "off"}):
+            self.plan("s1")
+            res = self.report("s1", knowledge='{"learned": ["split keeps empty token"], "open_questions": []}',
+                              workspace="changed parse.py", believes_verified="false")
+            rep = S.load("claude", "s1")["report"]
+            self.assertEqual(rep["knowledge"]["learned"], ["split keeps empty token"])
+            self.assertEqual(rep["workspace"]["changed"], ["changed parse.py"])
+            self.assertFalse(rep["believes_verified"])
+            self.assertIn("direction", res)
+
+    def test_goal_mismatch_only_for_off_list_work(self):
+        with mock.patch.dict(os.environ, {"JEV_STEPWISE_AUTO": "off"}):
+            todo = {"todos": [{"content": "fix parser", "status": "in_progress"},
+                              {"content": "commit the fix", "status": "pending"}]}
+            self.pre("g1", "TodoWrite", todo, "t")
+            self.post("g1", "TodoWrite", "t", {})
+            res = self.report("g1", current_goal="commit the fix")        # announcing the next item: fine
+            self.assertEqual(res["mismatches"], [])
+            res = self.report("g1", current_goal="rewrite the logging module")   # off-list
+            self.assertTrue(any("not on the todo list" in m for m in res["mismatches"]))
+
+    def test_borderline_claims_not_flagged(self):
+        srv = mcp_server.Server()
+        srv.pids, srv.cwd = [], "/p"
+        with mock.patch.dict(os.environ, {"JEV_STEPWISE_AUTO": "off"}):
+            self.plan("b1")
+            for p, flagged in ((0.35, False), (0.1, True)):
+                with mock.patch.object(jev, "ask", FakeJev(direction=choice("edit_workspace"),
+                                                           claims_supported=noul(p), next_step_sound=noul(0.9))):
+                    res = srv.set_state({"current_goal": "fix parser", "next_step": "edit", "session": "b1"})
+                self.assertEqual(bool(res["mismatches"]), flagged, p)
+
     def test_report_checked_against_evidence(self):
         with mock.patch.dict(os.environ, {"JEV_STEPWISE_AUTO": "off"}):
             self.plan("r1")
@@ -415,6 +468,22 @@ class TestSetState(TempState):
             self.assertTrue(any("last test/build failed" in m for m in res["mismatches"]))
             self.assertEqual(res["direction"]["direction"], "edit_workspace")
             self.assertIn("make lint", S.facts(S.load("claude", "r1"))["outstanding_required_runs"])
+
+
+class TestProjectConfig(TempState):
+    def test_project_file_overrides_but_cannot_drop_sensitive(self):
+        with tempfile.TemporaryDirectory() as proj:
+            sub = os.path.join(proj, "src")
+            os.makedirs(sub)
+            with open(os.path.join(proj, ".jev-stepwise-judge.json"), "w") as f:
+                json.dump({"require_set_state": "joints", "auto_judge": "gates", "sensitive_path_patterns": [],
+                           "extra_sensitive_path_patterns": ["secret-dir/"], "model": "evil"}, f)
+            with mock.patch.dict(os.environ, {"JEV_STEPWISE_AUTO": "", "JEV_STEPWISE_MODE": ""}):
+                cfg = config.load(sub)
+            self.assertEqual((cfg["require_set_state"], cfg["auto_judge"]), ("joints", "gates"))
+            self.assertEqual(cfg["model"], config.DEFAULTS["model"])  # not a project key
+            self.assertIn(r"(^|/)\.ssh/", cfg["sensitive"])            # defaults survive
+            self.assertIn("secret-dir/", cfg["sensitive"])
 
 
 class TestMCP(TempState):

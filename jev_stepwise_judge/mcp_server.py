@@ -103,8 +103,8 @@ class Server:
 
     # -------------------------------------------------------------- tools
     def get_direction(self, args):
-        cfg = config.load()
         st = self.session(args.get("session"))
+        cfg = config.load(st.get("cwd") or self.cwd)
         d = judge.get_direction(st, cfg)
         d.pop("answers", None)
         d["summary"] = judge.direction_text(d)
@@ -129,8 +129,8 @@ class Server:
         }
 
     def judge_step(self, args):
-        cfg = config.load()
         st = self.session(args.get("session"))
+        cfg = config.load(st.get("cwd") or self.cwd)
         tool = args.get("tool") or "Bash"
         tinput = args.get("input") or ({"command": args["description"]} if not args.get("tool") else {})
         cls = steps.classify(tool, tinput)
@@ -146,8 +146,8 @@ class Server:
                 "direction": res["direction"], "answers": res["answers"]}
 
     def choose_next(self, args):
-        cfg = config.load()
         st = self.session(args.get("session"))
+        cfg = config.load(st.get("cwd") or self.cwd)
         ctx = json.dumps({"facts": S.facts(st), "extra": args.get("context", "")}, default=str)
         if S.is_sensitive(" ".join(args["options"]) + ctx, cfg["sensitive"]):
             return {"error": "not sent: input mentions a sensitive path"}
@@ -165,8 +165,8 @@ class Server:
                 "outstanding_required_runs": f["outstanding_required_runs"]}
 
     def set_state(self, args):
-        cfg = config.load()
         st = self.session(args.get("session"))
+        cfg = config.load(st.get("cwd") or self.cwd)
         with hooks.locked(st["agent"], st["session"]):
             st = S.load(st["agent"], st["session"])
             S.set_report(st, args)
@@ -178,8 +178,11 @@ class Server:
             fresh = S.load(st["agent"], st["session"])
             fresh["last_direction"] = res["direction"]["direction"]
             S.save(fresh)
-        hooks.log({"agent": st["agent"], "event": "set_state", "direction": res["direction"]["direction"],
-                   "verdict": res["next_step_verdict"], "mismatches": len(res["mismatches"]), "ms": res["ms"]})
+        hooks.log({"agent": st["agent"], "session": st["session"][:12],
+                   "project": os.path.basename(st["cwd"].rstrip("/")),
+                   "event": "set_state", "direction": res["direction"]["direction"],
+                   "verdict": res["next_step_verdict"], "mismatches": [m[:120] for m in res["mismatches"]],
+                   "ms": res["ms"]})
         res["direction"].pop("alternatives", None)
         return res
 

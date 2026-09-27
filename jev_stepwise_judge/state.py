@@ -225,6 +225,9 @@ def on_post(st, tool, tool_use_id, event, response):
     text = steps.result_text(response)
     rec["status"] = "error" if failed else "ok"
     rec["result"] = text[-300:]
+    if rec["kind"] in EVIDENCE_KINDS:
+        st["seq"] += 1
+        st["last_evidence_seq"] = st["seq"]
     k, w, seq = st["knowledge"], st["workspace"], rec["seq"]
     kind = rec["kind"]
 
@@ -276,10 +279,16 @@ ACTING_KINDS = {"edit", "test", "build", "run_process", "stop_process", "vcs_com
                 "shell", "external", "delegate"}
 
 
+# steps whose results are new evidence: once one completes, an earlier report is stale.
+# Todo updates are bookkeeping and reads/searches only add knowledge, so neither
+# invalidates a report; steps sent together in one batch share a report.
+EVIDENCE_KINDS = ACTING_KINDS - {"goal_update"}
+
+
 def report_is_fresh(st):
-    """Has the agent reported (set_state) since its last acting step?"""
+    """Has the agent reported (set_state) since the last new evidence arrived?"""
     rep = st.get("report")
-    return bool(rep) and rep["seq"] > st.get("last_acting_seq", 0)
+    return bool(rep) and rep["seq"] > st.get("last_evidence_seq", 0)
 
 
 def set_plan(st, todos=None, required_edits=None, required_runs=None):
@@ -303,13 +312,40 @@ def set_plan(st, todos=None, required_edits=None, required_runs=None):
             for r in required_runs][:20]
 
 
+def _decode(v):
+    """Models sometimes send nested objects as JSON text."""
+    if isinstance(v, str) and v.strip()[:1] in "[{":
+        try:
+            return json.loads(v)
+        except ValueError:
+            return v
+    return v
+
+
+def _truthy(v):
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "yes", "1", "y")
+    return bool(v)
+
+
 def set_report(st, report):
     """The agent's own account of its state (MCP set_state). Kept apart from the
     observed state: it is a claim to check against the evidence, not a fact.
     Commands it says still have to run become tracked required runs."""
     def _list(v, n=12):
-        return [str(x)[:300] for x in (v or [])][:n] if isinstance(v, list) else ([str(v)[:300]] if v else [])
-    k, w = report.get("knowledge") or {}, report.get("workspace") or {}
+        v = _decode(v)
+        if isinstance(v, list):
+            return [str(x)[:300] for x in v if str(x).strip()][:n]
+        return [str(v)[:300]] if v else []
+
+    def _section(v, default_key):
+        v = _decode(v)
+        if isinstance(v, dict):
+            return v
+        return {default_key: v} if v else {}   # a bare string or list: treat as the main field
+    report = _decode(report) if not isinstance(report, dict) else report
+    k = _section(report.get("knowledge"), "learned")
+    w = _section(report.get("workspace"), "changed")
     st["seq"] += 1  # a report is newer than every step before it
     st["report"] = {
         "seq": st["seq"],
@@ -317,8 +353,8 @@ def set_report(st, report):
         "knowledge": {"learned": _list(k.get("learned")), "open_questions": _list(k.get("open_questions"), 8)},
         "workspace": {"changed": _list(w.get("changed")), "still_required": _list(w.get("still_required")),
                       "to_run": _list(w.get("to_run"), 8)},
-        "believes_goal_done": bool(report.get("believes_goal_done")),
-        "believes_verified": bool(report.get("believes_verified")),
+        "believes_goal_done": _truthy(report.get("believes_goal_done")),
+        "believes_verified": _truthy(report.get("believes_verified")),
         "next_step": str(report.get("next_step") or "")[:400],
     }
     known = {r["command"].strip() for r in st["workspace"]["required_runs"]}
@@ -372,9 +408,12 @@ def facts(st, proposed=None):
             mism.append("claims its work is verified, but no test or build has run")
         if rep["believes_goal_done"] and cur and cur["status"] == "in_progress" and f["unverified_edits"]:
             mism.append("believes '%s' is done while its edits are unverified" % cur["content"][:60])
-        if rep["current_goal"] and cur and not _same_goal(rep["current_goal"], cur["content"]):
-            mism.append("reports working on '%s' but the todo list's current goal is '%s'"
-                        % (rep["current_goal"][:60], cur["content"][:60]))
+        # announcing the next goal just before updating the list is normal; only work that
+        # matches no todo item at all is off-list
+        if rep["current_goal"] and g["todos"] and not any(_same_goal(rep["current_goal"], t["content"])
+                                                          for t in g["todos"]):
+            mism.append("reports working on '%s', which is not on the todo list; add it or update the list"
+                        % rep["current_goal"][:60])
         f["report_mismatches"] = mism
     if proposed:
         f["proposed_kind"] = proposed["kind"]

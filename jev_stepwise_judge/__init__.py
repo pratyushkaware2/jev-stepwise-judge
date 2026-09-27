@@ -5,4 +5,4 @@ has changed in the workspace, and where it is in its goal list) with the step
 it is about to take, and asks Jev a batch of narrow typed questions about it.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

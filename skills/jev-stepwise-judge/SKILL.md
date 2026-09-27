@@ -50,9 +50,11 @@ TypeSafe **Jev** checks your report against the recorded evidence and returns:
 3. **Follow the verdict.** If the verdict is `reconsider` or there are mismatches,
    move in the returned direction instead. Explicit instructions from the user
    outrank the judge.
-4. **When a step is blocked with "call set_state first"**, your setup requires a
-   report before that kind of step. Report, then retry the step if the verdict
-   allows it.
+4. **When a step is blocked because new results arrived since your last report**,
+   your setup requires a fresh report. Call `set_state`, then retry the step if the
+   verdict allows it. A report covers every step you send until the next result comes
+   back (steps sent together in one batch share it), and todo-list updates don't use
+   it up.
 5. **Read before you edit, verify after you edit.** Check on background processes
    you started.
 6. **After a denial, change course.** Do not retry the same call unchanged.
